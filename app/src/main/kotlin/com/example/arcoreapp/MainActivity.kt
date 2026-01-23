@@ -72,7 +72,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            onTapAr = { hitResult ->
+            onTapAr = { hitResult, _ ->
                 if (boxNode == null) {
                     placeBox(hitResult.createAnchor())
                 }
@@ -144,6 +144,59 @@ class MainActivity : AppCompatActivity() {
             rowBinding.valueText.text = String.format("%.3f", current)
             onUpdate(current)
         }
+    }
+
+    private fun toggleRecording() {
+        if (!isRecording) {
+            if (boxNode == null) {
+                Toast.makeText(this, "Place box first!", Toast.LENGTH_SHORT).show()
+                return
+            }
+            isRecording = true
+            frameCount = 0
+            captureManager.startNewSequence()
+            binding.btnRecord.text = "STOP RECORDING"
+            binding.fpsText.text = "Status: RECORDING..."
+        } else {
+            isRecording = false
+            captureManager.finishSequence()
+            binding.btnRecord.text = "START RECORDING"
+            binding.fpsText.text = "Status: IDLE (Saved ${frameCount} frames)"
+        }
+    }
+
+    private fun processFrameForRecording(frame: io.github.sceneview.ar.arcore.ArFrame) {
+        val node = boxNode ?: return
+        isProcessingFrame = true
+
+        val camera = frame.camera
+        val viewMatrix = FloatArray(16)
+        camera.getViewMatrix(viewMatrix, 0)
+        val nodeWorldTransform = node.worldTransform.toFloatArray()
+
+        val intrinsics = camera.imageIntrinsics
+        val fx = intrinsics.focalLength[0]
+        val fy = intrinsics.focalLength[1]
+        val cx = intrinsics.principalPoint[0]
+        val cy = intrinsics.principalPoint[1]
+        val width = intrinsics.imageDimensions[0]
+        val height = intrinsics.imageDimensions[1]
+
+        val frameId = frameCount++
+        val imageName = "frame_${String.format("%04d", frameId)}.jpg"
+        val entry = AnnotationGenerator.createEntry(
+            frameId, imageName, nodeWorldTransform, viewMatrix,
+            fx, fy, cx, cy, width, height, System.currentTimeMillis()
+        )
+
+        // Capture Image via PixelCopy
+        val bitmap = Bitmap.createBitmap(sceneView.width, sceneView.height, Bitmap.Config.ARGB_8888)
+        PixelCopy.request(sceneView, bitmap, { result ->
+            if (result == PixelCopy.SUCCESS) {
+                captureManager.saveFrame(bitmap, entry)
+            }
+            isProcessingFrame = false
+        }, sceneView.handler)
     }
 
     private fun updateBoxTransform() {
