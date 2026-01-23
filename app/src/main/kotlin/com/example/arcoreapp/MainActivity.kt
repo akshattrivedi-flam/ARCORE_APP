@@ -3,20 +3,16 @@ package com.example.arcoreapp
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.view.PixelCopy
-import android.view.View
-import android.widget.SeekBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.example.arcoreapp.databinding.ActivityMainBinding
 import com.google.ar.core.Anchor
 import com.google.ar.core.Config
-import com.google.ar.core.Plane
 import io.github.sceneview.ar.ArSceneView
 import io.github.sceneview.ar.node.ArNode
 import io.github.sceneview.math.Rotation
 import io.github.sceneview.math.Scale
-import io.github.sceneview.node.CubeNode
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -29,14 +25,12 @@ class MainActivity : AppCompatActivity() {
     private var frameCount = 0
 
     // Box properties (Manual fitting)
-    private var scaleX = 0.065f // Standard can diameter ~6.5cm
-    private var scaleY = 0.12f   // Standard can height ~12cm
+    private var scaleX = 0.065f
+    private var scaleY = 0.12f
     private var scaleZ = 0.065f
-    
     private var rotX = 0f
     private var rotY = 0f
     private var rotZ = 0f
-
     private var transX = 0f
     private var transY = 0f
     private var transZ = 0f
@@ -63,6 +57,7 @@ class MainActivity : AppCompatActivity() {
             planeRenderer.isVisible = true
             
             onArFrame = { frame ->
+                updateOverlay(frame)
                 if (isRecording && !isProcessingFrame) {
                     val currentTime = System.currentTimeMillis()
                     if (currentTime - lastFrameTime >= 16) { 
@@ -83,37 +78,50 @@ class MainActivity : AppCompatActivity() {
     private fun placeBox(anchor: Anchor) {
         val node = ArNode(sceneView.engine)
         node.anchor = anchor
-        
-        val cube = CubeNode(sceneView.engine, size = Scale(1f, 1f, 1f))
-        node.addChild(cube)
-        
         sceneView.addChild(node)
         boxNode = node
         updateBoxTransform()
-        
         binding.statusText.text = "Box placed. Use buttons to fit the can."
     }
 
+    private fun updateOverlay(frame: io.github.sceneview.ar.arcore.ArFrame) {
+        val node = boxNode ?: return
+        val camera = frame.camera
+        val viewMatrix = FloatArray(16)
+        camera.getViewMatrix(viewMatrix, 0)
+        
+        val intrinsics = camera.imageIntrinsics
+        val fx = intrinsics.focalLength[0]
+        val fy = intrinsics.focalLength[1]
+        val cx = intrinsics.principalPoint[0]
+        val cy = intrinsics.principalPoint[1]
+        val width = intrinsics.imageDimensions[0]
+        val height = intrinsics.imageDimensions[1]
+
+        val entry = AnnotationGenerator.createEntry(
+            0, "", node.worldTransform.toFloatArray(), viewMatrix,
+            fx, fy, cx, cy, width, height, 0
+        )
+        
+        runOnUiThread {
+            binding.boxOverlay.updatePoints(entry.keypoints2d)
+        }
+    }
+
     private fun setupControls() {
-        // SCALE
         setupRow(binding.ctrlScaleX, "Scale X", scaleX) { scaleX = it; updateBoxTransform() }
         setupRow(binding.ctrlScaleY, "Scale Y", scaleY) { scaleY = it; updateBoxTransform() }
         setupRow(binding.ctrlScaleZ, "Scale Z", scaleZ) { scaleZ = it; updateBoxTransform() }
 
-        // ROTATION
         setupRow(binding.ctrlRotX, "Rot X", rotX, 5f) { rotX = it; updateBoxTransform() }
         setupRow(binding.ctrlRotY, "Rot Y", rotY, 5f) { rotY = it; updateBoxTransform() }
         setupRow(binding.ctrlRotZ, "Rot Z", rotZ, 5f) { rotZ = it; updateBoxTransform() }
 
-        // TRANSLATION
         setupRow(binding.ctrlTransX, "Trans X", transX, 0.01f) { transX = it; updateBoxTransform() }
         setupRow(binding.ctrlTransY, "Trans Y", transY, 0.01f) { transY = it; updateBoxTransform() }
         setupRow(binding.ctrlTransZ, "Trans Z", transZ, 0.01f) { transZ = it; updateBoxTransform() }
 
-        binding.btnRecord.setOnClickListener {
-            toggleRecording()
-        }
-
+        binding.btnRecord.setOnClickListener { toggleRecording() }
         binding.btnExport.setOnClickListener {
             val capturePath = captureManager.getCapturePath()
             val directory = File(capturePath)
@@ -131,13 +139,11 @@ class MainActivity : AppCompatActivity() {
         var current = initialValue
         rowBinding.label.text = label
         rowBinding.valueText.text = String.format("%.3f", current)
-
         rowBinding.btnPlus.setOnClickListener {
             current += step
             rowBinding.valueText.text = String.format("%.3f", current)
             onUpdate(current)
         }
-
         rowBinding.btnMinus.setOnClickListener {
             current -= step
             if (label.contains("Scale") && current < 0.001f) current = 0.001f
@@ -168,12 +174,10 @@ class MainActivity : AppCompatActivity() {
     private fun processFrameForRecording(frame: io.github.sceneview.ar.arcore.ArFrame) {
         val node = boxNode ?: return
         isProcessingFrame = true
-
         val camera = frame.camera
         val viewMatrix = FloatArray(16)
         camera.getViewMatrix(viewMatrix, 0)
-        val nodeWorldTransform = node.worldTransform.toFloatArray()
-
+        
         val intrinsics = camera.imageIntrinsics
         val fx = intrinsics.focalLength[0]
         val fy = intrinsics.focalLength[1]
@@ -185,11 +189,10 @@ class MainActivity : AppCompatActivity() {
         val frameId = frameCount++
         val imageName = "frame_${String.format("%04d", frameId)}.jpg"
         val entry = AnnotationGenerator.createEntry(
-            frameId, imageName, nodeWorldTransform, viewMatrix,
+            frameId, imageName, node.worldTransform.toFloatArray(), viewMatrix,
             fx, fy, cx, cy, width, height, System.currentTimeMillis()
         )
 
-        // Capture Image via PixelCopy
         val bitmap = Bitmap.createBitmap(sceneView.width, sceneView.height, Bitmap.Config.ARGB_8888)
         PixelCopy.request(sceneView, bitmap, { result ->
             if (result == PixelCopy.SUCCESS) {
