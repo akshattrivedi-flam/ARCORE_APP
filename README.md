@@ -44,7 +44,7 @@ The `annotations.json` file contains a list of frame objects:
 ## Usage
 1. Open the app and scan the floor until dots appear.
 2. Tap on the floor to place the bounding box.
-3. Use sliders to resize and rotate the box to match your beverage can precisely.
+3. Use the **- / + buttons** to adjust Scale, Rotation, and Translation in all 3 axes (X, Y, Z) to match your beverage can precisely.
 4. Tap **"START RECORDING"**.
 5. Move the phone slowly around the can (360 degrees, different heights) to capture all angles.
 6. The app captures frames at up to 60fps with synchronization between images and matrices.
