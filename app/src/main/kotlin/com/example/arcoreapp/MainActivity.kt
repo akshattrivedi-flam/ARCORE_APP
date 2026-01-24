@@ -95,8 +95,8 @@ class MainActivity : AppCompatActivity() {
             focusMode = Config.FocusMode.AUTO
             lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
             
-            // Enable depth for better stability if supported
-            onSessionCreated = { session ->
+            // Configure session for depth and stability
+            onSessionResumed = { session ->
                 val config = session.config
                 if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
                     config.depthMode = Config.DepthMode.AUTOMATIC
