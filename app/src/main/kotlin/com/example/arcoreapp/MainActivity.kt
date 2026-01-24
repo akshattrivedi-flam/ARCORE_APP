@@ -90,7 +90,7 @@ class MainActivity : AppCompatActivity() {
             planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
             focusMode = Config.FocusMode.AUTO
             lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
-            planeRenderer.isVisible = true
+            planeRenderer.isVisible = false // Hide the dotted patterns
             
             onArFrame = { frame ->
                 val arFrame = frame.frame
@@ -248,6 +248,7 @@ class MainActivity : AppCompatActivity() {
         boxNode?.let { node ->
             node.scale = Scale(scaleX, scaleY, scaleZ)
             node.rotation = Rotation(rotX, rotY, rotZ)
+            // Use local position for translation relative to the anchor
             node.position = io.github.sceneview.math.Position(transX, transY, transZ)
         }
     }
