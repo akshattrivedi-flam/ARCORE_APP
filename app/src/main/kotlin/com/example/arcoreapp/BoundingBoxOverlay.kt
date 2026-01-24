@@ -23,7 +23,13 @@ class BoundingBoxOverlay @JvmOverloads constructor(
     private val fillPaint = Paint().apply {
         style = Paint.Style.FILL
         isAntiAlias = true
-        alpha = 100 // Translucent
+    }
+
+    private val borderPaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+        isAntiAlias = true
+        alpha = 180
     }
 
     private val facePath = Path()
@@ -43,7 +49,7 @@ class BoundingBoxOverlay @JvmOverloads constructor(
         val w = width.toFloat()
         val h = height.toFloat()
 
-        // Face definitions using 1-based indexing from UNIT_CUBE_POINTS
+        // Face definitions (1-based index)
         // 1-2-3-4: Front
         // 5-6-7-8: Back
         // 1-2-6-5: Bottom
@@ -51,20 +57,20 @@ class BoundingBoxOverlay @JvmOverloads constructor(
         // 1-4-8-5: Left
         // 2-3-7-6: Right
 
-        // Draw faces with specific colors
-        drawFace(canvas, pts, listOf(1, 2, 3, 4), Color.RED, w, h)    // Front
-        drawFace(canvas, pts, listOf(5, 6, 7, 8), Color.RED, w, h)    // Back
-        drawFace(canvas, pts, listOf(1, 2, 6, 5), Color.BLUE, w, h)   // Bottom
-        drawFace(canvas, pts, listOf(4, 3, 7, 8), Color.BLUE, w, h)   // Top
-        drawFace(canvas, pts, listOf(1, 4, 8, 5), Color.GREEN, w, h)  // Left
-        drawFace(canvas, pts, listOf(2, 3, 7, 6), Color.GREEN, w, h)  // Right
+        // Draw faces with specific colors (40/255 opacity for translucency)
+        val opacity = 60
+        drawFace(canvas, pts, listOf(1, 2, 3, 4), Color.RED, opacity, w, h)    // Front
+        drawFace(canvas, pts, listOf(5, 6, 7, 8), Color.RED, opacity, w, h)    // Back
         
-        // Let's add Yellow for Top/Bottom instead of repeating Blue
-        drawFace(canvas, pts, listOf(4, 3, 7, 8), Color.YELLOW, w, h) // Top
-        drawFace(canvas, pts, listOf(1, 2, 6, 5), Color.YELLOW, w, h) // Bottom
+        drawFace(canvas, pts, listOf(1, 4, 8, 5), Color.GREEN, opacity, w, h)  // Left
+        drawFace(canvas, pts, listOf(2, 3, 7, 6), Color.GREEN, opacity, w, h)  // Right
+        
+        drawFace(canvas, pts, listOf(4, 3, 7, 8), Color.BLUE, opacity, w, h)   // Top
+        drawFace(canvas, pts, listOf(1, 2, 6, 5), Color.YELLOW, opacity, w, h) // Bottom
 
-        // Draw Wireframe on top
+        // Draw Wireframe
         strokePaint.color = Color.WHITE
+        strokePaint.strokeWidth = 4f
         // Front
         drawLine(canvas, pts, 1, 2, w, h)
         drawLine(canvas, pts, 2, 3, w, h)
@@ -82,22 +88,25 @@ class BoundingBoxOverlay @JvmOverloads constructor(
         drawLine(canvas, pts, 4, 8, w, h)
 
         // Center point
-        strokePaint.color = Color.WHITE
         strokePaint.style = Paint.Style.FILL
-        canvas.drawCircle(pts[0][0] * w, pts[0][1] * h, 8f, strokePaint)
+        canvas.drawCircle(pts[0][0] * w, pts[0][1] * h, 10f, strokePaint)
         strokePaint.style = Paint.Style.STROKE
     }
 
-    private fun drawFace(canvas: Canvas, pts: List<List<Float>>, indices: List<Int>, color: Int, w: Float, h: Float) {
+    private fun drawFace(canvas: Canvas, pts: List<List<Float>>, indices: List<Int>, color: Int, opacity: Int, w: Float, h: Float) {
         fillPaint.color = color
-        fillPaint.alpha = 80 // Transparency
+        fillPaint.alpha = opacity
+        borderPaint.color = color
+        
         facePath.reset()
         facePath.moveTo(pts[indices[0]][0] * w, pts[indices[0]][1] * h)
         for (i in 1 until indices.size) {
             facePath.lineTo(pts[indices[i]][0] * w, pts[indices[i]][1] * h)
         }
         facePath.close()
+        
         canvas.drawPath(facePath, fillPaint)
+        canvas.drawPath(facePath, borderPaint)
     }
 
     private fun drawLine(canvas: Canvas, pts: List<List<Float>>, i: Int, j: Int, w: Float, h: Float) {

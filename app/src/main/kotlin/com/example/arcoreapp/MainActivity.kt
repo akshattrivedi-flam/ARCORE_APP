@@ -19,6 +19,7 @@ import io.github.sceneview.ar.ArSceneView
 import io.github.sceneview.ar.node.ArNode
 import io.github.sceneview.math.Rotation
 import io.github.sceneview.math.Scale
+import io.github.sceneview.math.Position
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -26,7 +27,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var sceneView: ArSceneView
-    private var boxNode: ArNode? = null
+    private var boxNode: ArNode? = null // This will be the anchored parent
+    private var transformableNode: ArNode? = null // This will be the child we transform
     private lateinit var captureManager: CaptureManager
     private var frameCount = 0
 
@@ -38,7 +40,7 @@ class MainActivity : AppCompatActivity() {
     private var rotY = 0f
     private var rotZ = 0f
     private var transX = 0f
-    private var transY = 0f
+    private var transY = 0.12f // Default to scaleY so it sits on the plane
     private var transZ = 0f
 
     private var isRecording = false
@@ -111,23 +113,40 @@ class MainActivity : AppCompatActivity() {
 
             onTapAr = { hitResult, _ ->
                 if (boxNode == null) {
-                    placeBox(hitResult.createAnchor())
+                    // Try to hit a plane for better accuracy
+                    val trackable = hitResult.trackable
+                    if (trackable is Plane && trackable.isPoseInPolygon(hitResult.hitPose)) {
+                        placeBox(hitResult.createAnchor())
+                    } else if (trackable is Plane) {
+                        // Still a plane, maybe just outside polygon
+                        placeBox(hitResult.createAnchor())
+                    } else {
+                        // Fallback to any hit
+                        placeBox(hitResult.createAnchor())
+                    }
                 }
             }
         }
     }
 
     private fun placeBox(anchor: Anchor) {
-        val node = ArNode(sceneView.engine)
-        node.anchor = anchor
-        sceneView.addChild(node)
-        boxNode = node
+        // Parent node tied to the anchor
+        val parentNode = ArNode(sceneView.engine)
+        parentNode.anchor = anchor
+        sceneView.addChild(parentNode)
+        boxNode = parentNode
+
+        // Child node that we actually move/rotate/scale
+        val childNode = ArNode(sceneView.engine)
+        parentNode.addChild(childNode)
+        transformableNode = childNode
+
         updateBoxTransform()
         binding.statusText.text = "Box placed. Use buttons to fit the can."
     }
 
     private fun updateOverlay(frame: io.github.sceneview.ar.arcore.ArFrame) {
-        val node = boxNode ?: return
+        val node = transformableNode ?: return
         val camera = frame.camera
         val viewMatrix = FloatArray(16)
         camera.getViewMatrix(viewMatrix, 0)
@@ -214,7 +233,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processFrameForRecording(frame: io.github.sceneview.ar.arcore.ArFrame) {
-        val node = boxNode ?: return
+        val node = transformableNode ?: return
         isProcessingFrame = true
         val camera = frame.camera
         val viewMatrix = FloatArray(16)
@@ -245,11 +264,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateBoxTransform() {
-        boxNode?.let { node ->
+        transformableNode?.let { node ->
             node.scale = Scale(scaleX, scaleY, scaleZ)
             node.rotation = Rotation(rotX, rotY, rotZ)
-            // Use local position for translation relative to the anchor
-            node.position = io.github.sceneview.math.Position(transX, transY, transZ)
+            node.position = Position(transX, transY, transZ)
         }
     }
 }
