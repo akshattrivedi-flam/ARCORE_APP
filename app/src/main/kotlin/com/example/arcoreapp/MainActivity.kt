@@ -1,10 +1,14 @@
 package com.example.arcoreapp
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.view.PixelCopy
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.example.arcoreapp.databinding.ActivityMainBinding
 import com.google.ar.core.Anchor
@@ -39,6 +43,10 @@ class MainActivity : AppCompatActivity() {
     private var isProcessingFrame = false
     private var lastFrameTime = 0L
 
+    companion object {
+        private const val CAMERA_PERMISSION_CODE = 100
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -47,16 +55,47 @@ class MainActivity : AppCompatActivity() {
         sceneView = binding.sceneView
         captureManager = CaptureManager(this)
 
-        setupScene()
+        if (checkCameraPermission()) {
+            setupScene()
+        } else {
+            requestCameraPermission()
+        }
         setupControls()
+    }
+
+    private fun checkCameraPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestCameraPermission() {
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_CODE)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == CAMERA_PERMISSION_CODE) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                setupScene()
+            } else {
+                Toast.makeText(this, "Camera permission is required for AR", Toast.LENGTH_LONG).show()
+                finish()
+            }
+        }
     }
 
     private fun setupScene() {
         sceneView.apply {
-            lightEstimationMode = Config.LightEstimationMode.DISABLED
+            planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
+            focusMode = Config.FocusMode.AUTO
+            lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
             planeRenderer.isVisible = true
             
             onArFrame = { frame ->
+                val planes = frame.allPlanes.filter { it.trackingState == com.google.ar.core.TrackingState.TRACKING }
+                if (planes.isNotEmpty() && boxNode == null) {
+                    binding.statusText.text = "Plane detected. Tap to place box."
+                }
+                
                 updateOverlay(frame)
                 if (isRecording && !isProcessingFrame) {
                     val currentTime = System.currentTimeMillis()
