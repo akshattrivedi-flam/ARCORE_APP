@@ -91,7 +91,8 @@ class MainActivity : AppCompatActivity() {
             planeRenderer.isVisible = true
             
             onArFrame = { frame ->
-                val planes = frame.allPlanes.filter { it.trackingState == com.google.ar.core.TrackingState.TRACKING }
+                val arFrame = frame.frame
+                val planes = arFrame.allPlanes.filter { it.trackingState == com.google.ar.core.TrackingState.TRACKING }
                 if (planes.isNotEmpty() && boxNode == null) {
                     binding.statusText.text = "Plane detected. Tap to place box."
                 }
