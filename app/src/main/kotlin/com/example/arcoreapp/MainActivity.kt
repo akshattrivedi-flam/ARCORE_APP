@@ -13,6 +13,8 @@ import androidx.lifecycle.lifecycleScope
 import com.example.arcoreapp.databinding.ActivityMainBinding
 import com.google.ar.core.Anchor
 import com.google.ar.core.Config
+import com.google.ar.core.Plane
+import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ArSceneView
 import io.github.sceneview.ar.node.ArNode
 import io.github.sceneview.math.Rotation
@@ -92,7 +94,7 @@ class MainActivity : AppCompatActivity() {
             
             onArFrame = { frame ->
                 val arFrame = frame.frame
-                val planes = arFrame.allPlanes.filter { it.trackingState == com.google.ar.core.TrackingState.TRACKING }
+                val planes = arFrame.getUpdatedTrackables(Plane::class.java).filter { it.trackingState == TrackingState.TRACKING }
                 if (planes.isNotEmpty() && boxNode == null) {
                     binding.statusText.text = "Plane detected. Tap to place box."
                 }
