@@ -3,6 +3,7 @@ package com.example.arcoreapp
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.opengl.Matrix
 import android.os.Bundle
 import android.view.PixelCopy
 import android.widget.Toast
@@ -14,6 +15,7 @@ import com.example.arcoreapp.databinding.ActivityMainBinding
 import com.google.ar.core.Anchor
 import com.google.ar.core.Config
 import com.google.ar.core.Plane
+import com.google.ar.core.Pose
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ArSceneView
 import io.github.sceneview.ar.node.ArNode
@@ -40,7 +42,7 @@ class MainActivity : AppCompatActivity() {
     private var rotY = 0f
     private var rotZ = 0f
     private var transX = 0f
-    private var transY = 0.12f // Default to scaleY so it sits on the plane
+    private var transY = 0.06f // Center the box so bottom is on plane (0.12 / 2)
     private var transZ = 0f
 
     private var isRecording = false
@@ -92,6 +94,17 @@ class MainActivity : AppCompatActivity() {
             planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
             focusMode = Config.FocusMode.AUTO
             lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
+            
+            // Enable depth for better stability if supported
+            onSessionCreated = { session ->
+                val config = session.config
+                if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+                    config.depthMode = Config.DepthMode.AUTOMATIC
+                }
+                config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+                session.configure(config)
+            }
+
             planeRenderer.isVisible = false // Hide the dotted patterns
             
             onArFrame = { frame ->
@@ -104,7 +117,7 @@ class MainActivity : AppCompatActivity() {
                 updateOverlay(frame)
                 if (isRecording && !isProcessingFrame) {
                     val currentTime = System.currentTimeMillis()
-                    if (currentTime - lastFrameTime >= 16) { 
+                    if (currentTime - lastFrameTime >= 33) { // ~30 FPS
                         processFrameForRecording(frame)
                         lastFrameTime = currentTime
                     }
@@ -113,32 +126,24 @@ class MainActivity : AppCompatActivity() {
 
             onTapAr = { hitResult, _ ->
                 if (boxNode == null) {
-                    // Try to hit a plane for better accuracy
-                    val trackable = hitResult.trackable
-                    if (trackable is Plane && trackable.isPoseInPolygon(hitResult.hitPose)) {
-                        placeBox(hitResult.createAnchor())
-                    } else if (trackable is Plane) {
-                        // Still a plane, maybe just outside polygon
-                        placeBox(hitResult.createAnchor())
-                    } else {
-                        // Fallback to any hit
-                        placeBox(hitResult.createAnchor())
-                    }
+                    // Create an anchor at the hit location
+                    val anchor = hitResult.createAnchor()
+                    placeBox(anchor)
                 }
             }
         }
     }
 
     private fun placeBox(anchor: Anchor) {
-        // Parent node tied to the anchor
-        val parentNode = ArNode(sceneView.engine)
-        parentNode.anchor = anchor
-        sceneView.addChild(parentNode)
-        boxNode = parentNode
-
-        // Child node that we actually move/rotate/scale
+        val node = ArNode(sceneView.engine)
+        node.anchor = anchor
+        sceneView.addChild(node)
+        boxNode = node
+        
+        // We still create a child node for visual representation if needed, 
+        // but our overlay logic uses calculateModelMatrix(anchor).
         val childNode = ArNode(sceneView.engine)
-        parentNode.addChild(childNode)
+        node.addChild(childNode)
         transformableNode = childNode
 
         updateBoxTransform()
@@ -146,11 +151,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateOverlay(frame: io.github.sceneview.ar.arcore.ArFrame) {
-        val node = transformableNode ?: return
+        val anchor = boxNode?.anchor ?: return
+        if (anchor.trackingState != TrackingState.TRACKING) return
+
         val camera = frame.camera
         val viewMatrix = FloatArray(16)
         camera.getViewMatrix(viewMatrix, 0)
         
+        // Calculate the model matrix manually for maximum precision and reactivity
+        val modelMatrix = calculateModelMatrix(anchor)
+
         val intrinsics = camera.imageIntrinsics
         val fx = intrinsics.focalLength[0]
         val fy = intrinsics.focalLength[1]
@@ -160,13 +170,54 @@ class MainActivity : AppCompatActivity() {
         val height = intrinsics.imageDimensions[1]
 
         val entry = AnnotationGenerator.createEntry(
-            0, "", node.worldTransform.toFloatArray(), viewMatrix,
+            0, "", modelMatrix, viewMatrix,
             fx, fy, cx, cy, width, height, 0
         )
         
         runOnUiThread {
             binding.boxOverlay.updatePoints(entry.keypoints2d)
         }
+    }
+
+    private fun calculateModelMatrix(anchor: Anchor): FloatArray {
+        // 1. Get Anchor Pose
+        val anchorPose = anchor.pose
+        
+        // 2. Create local transformation pose (Translation + Rotation)
+        // Convert Euler angles to Quaternion
+        val quat = eulerToQuaternion(rotX, rotY, rotZ)
+        val localPose = Pose.makeTranslation(transX, transY, transZ)
+            .compose(Pose.makeRotation(quat[0], quat[1], quat[2], quat[3]))
+        
+        // 3. Combine to get World Pose
+        val worldPose = anchorPose.compose(localPose)
+        
+        // 4. Convert to Matrix and apply Scale
+        val matrix = FloatArray(16)
+        worldPose.toMatrix(matrix, 0)
+        android.opengl.Matrix.scaleM(matrix, 0, scaleX, scaleY, scaleZ)
+        
+        return matrix
+    }
+
+    private fun eulerToQuaternion(pitch: Float, yaw: Float, roll: Float): FloatArray {
+        val p = Math.toRadians(pitch.toDouble()).toFloat()
+        val y = Math.toRadians(yaw.toDouble()).toFloat()
+        val r = Math.toRadians(roll.toDouble()).toFloat()
+
+        val c1 = Math.cos((y / 2).toDouble()).toFloat()
+        val s1 = Math.sin((y / 2).toDouble()).toFloat()
+        val c2 = Math.cos((p / 2).toDouble()).toFloat()
+        val s2 = Math.sin((p / 2).toDouble()).toFloat()
+        val c3 = Math.cos((r / 2).toDouble()).toFloat()
+        val s3 = Math.sin((r / 2).toDouble()).toFloat()
+
+        return floatArrayOf(
+            s1 * s2 * c3 + c1 * c2 * s3, // x
+            s1 * c2 * c3 + c1 * s2 * s3, // y
+            c1 * s2 * c3 - s1 * c2 * s3, // z
+            c1 * c2 * c3 - s1 * s2 * s3  // w
+        )
     }
 
     private fun setupControls() {
@@ -233,12 +284,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processFrameForRecording(frame: io.github.sceneview.ar.arcore.ArFrame) {
-        val node = transformableNode ?: return
+        val anchor = boxNode?.anchor ?: return
         isProcessingFrame = true
         val camera = frame.camera
         val viewMatrix = FloatArray(16)
         camera.getViewMatrix(viewMatrix, 0)
         
+        // Use the same robust matrix calculation as the overlay
+        val modelMatrix = calculateModelMatrix(anchor)
+
         val intrinsics = camera.imageIntrinsics
         val fx = intrinsics.focalLength[0]
         val fy = intrinsics.focalLength[1]
@@ -250,7 +304,7 @@ class MainActivity : AppCompatActivity() {
         val frameId = frameCount++
         val imageName = "frame_${String.format("%04d", frameId)}.jpg"
         val entry = AnnotationGenerator.createEntry(
-            frameId, imageName, node.worldTransform.toFloatArray(), viewMatrix,
+            frameId, imageName, modelMatrix, viewMatrix,
             fx, fy, cx, cy, width, height, System.currentTimeMillis()
         )
 
@@ -264,6 +318,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateBoxTransform() {
+        // We still update the transformableNode so it renders correctly in 3D space 
+        // if there's any model attached, but our primary tracking is now via calculateModelMatrix.
         transformableNode?.let { node ->
             node.scale = Scale(scaleX, scaleY, scaleZ)
             node.rotation = Rotation(rotX, rotY, rotZ)

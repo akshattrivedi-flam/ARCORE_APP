@@ -58,7 +58,7 @@ class BoundingBoxOverlay @JvmOverloads constructor(
         // 2-3-7-6: Right
 
         // Draw faces with specific colors (40/255 opacity for translucency)
-        val opacity = 60
+        val opacity = 80
         drawFace(canvas, pts, listOf(1, 2, 3, 4), Color.RED, opacity, w, h)    // Front
         drawFace(canvas, pts, listOf(5, 6, 7, 8), Color.RED, opacity, w, h)    // Back
         
