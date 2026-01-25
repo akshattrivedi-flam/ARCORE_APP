@@ -99,10 +99,10 @@ class MainActivity : AppCompatActivity() {
             onArSessionCreated = { session ->
                 val config = session.config
                 if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
-                    config.depthMode = Config.DepthMode.AUTOMATIC
+                    config.setDepthMode(Config.DepthMode.AUTOMATIC)
                 }
-                config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                config.focusMode = Config.FocusMode.AUTO
+                config.setUpdateMode(Config.UpdateMode.LATEST_CAMERA_IMAGE)
+                config.setFocusMode(Config.FocusMode.AUTO)
                 session.configure(config)
             }
 
