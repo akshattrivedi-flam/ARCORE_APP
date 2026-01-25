@@ -96,14 +96,14 @@ class MainActivity : AppCompatActivity() {
             lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
             
             // Configure session for depth and stability
-            sessionConfiguration = { session, config ->
+            onArSessionCreated = { session ->
+                val config = session.config
                 if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
                     config.depthMode = Config.DepthMode.AUTOMATIC
                 }
                 config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                
-                // Set focusing mode to auto
                 config.focusMode = Config.FocusMode.AUTO
+                session.configure(config)
             }
 
             planeRenderer.isVisible = false // Hide the dotted patterns
