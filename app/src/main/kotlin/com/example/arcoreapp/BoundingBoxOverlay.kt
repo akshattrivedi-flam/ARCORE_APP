@@ -57,16 +57,21 @@ class BoundingBoxOverlay @JvmOverloads constructor(
         // 1-4-8-5: Left
         // 2-3-7-6: Right
 
-        // Draw faces with specific colors (40/255 opacity for translucency)
+        // Draw faces with specific colors (80/255 opacity for translucency)
         val opacity = 80
+        
+        // Front/Back: Red
         drawFace(canvas, pts, listOf(1, 2, 3, 4), Color.RED, opacity, w, h)    // Front
         drawFace(canvas, pts, listOf(5, 6, 7, 8), Color.RED, opacity, w, h)    // Back
         
-        drawFace(canvas, pts, listOf(1, 4, 8, 5), Color.GREEN, opacity, w, h)  // Left
-        drawFace(canvas, pts, listOf(2, 3, 7, 6), Color.GREEN, opacity, w, h)  // Right
+        // Left/Right: Blue
+        drawFace(canvas, pts, listOf(1, 4, 8, 5), Color.BLUE, opacity, w, h)   // Left
+        drawFace(canvas, pts, listOf(2, 3, 7, 6), Color.BLUE, opacity, w, h)   // Right
         
-        drawFace(canvas, pts, listOf(4, 3, 7, 8), Color.BLUE, opacity, w, h)   // Top
-        drawFace(canvas, pts, listOf(1, 2, 6, 5), Color.YELLOW, opacity, w, h) // Bottom
+        // Top: Yellow, Bottom: Green
+        drawFace(canvas, pts, listOf(4, 3, 7, 8), Color.YELLOW, opacity, w, h) // Top
+        drawFace(canvas, pts, listOf(1, 2, 6, 5), Color.GREEN, opacity, w, h)  // Bottom
+
 
         // Draw Wireframe
         strokePaint.color = Color.WHITE

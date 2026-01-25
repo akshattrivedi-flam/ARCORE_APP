@@ -34,15 +34,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var captureManager: CaptureManager
     private var frameCount = 0
 
-    // Box properties (Manual fitting)
-    private var scaleX = 0.065f
-    private var scaleY = 0.12f
-    private var scaleZ = 0.065f
+    // Box properties (Manual fitting) - values in centimeters
+    private var scaleX = 6.5f
+    private var scaleY = 12f
+    private var scaleZ = 6.5f
     private var rotX = 0f
     private var rotY = 0f
     private var rotZ = 0f
     private var transX = 0f
-    private var transY = 0.06f // Center the box so bottom is on plane (0.12 / 2)
+    private var transY = 6f // Center the box so bottom is on plane (12 / 2)
     private var transZ = 0f
 
     private var isRecording = false
@@ -96,23 +96,35 @@ class MainActivity : AppCompatActivity() {
             lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
             
             // Configure session for depth and stability
-            onSessionConfiguration = { session, config ->
+            sessionConfiguration = { session, config ->
                 if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
                     config.depthMode = Config.DepthMode.AUTOMATIC
                 }
                 config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+                
+                // Set focusing mode to auto
+                config.focusMode = Config.FocusMode.AUTO
             }
 
             planeRenderer.isVisible = false // Hide the dotted patterns
             
             onArFrame = { frame ->
                 val arFrame = frame.frame
-                val planes = arFrame.getUpdatedTrackables(Plane::class.java).filter { it.trackingState == TrackingState.TRACKING }
-                if (planes.isNotEmpty() && boxNode == null) {
-                    binding.statusText.text = "Plane detected. Tap to place box."
+                
+                // Filter planes that are tracking and are horizontal upward facing
+                // This ensures we only detect the ground/table surface for stability
+                val planes = arFrame.getUpdatedTrackables(Plane::class.java).filter { 
+                    it.trackingState == TrackingState.TRACKING && 
+                    it.type == Plane.Type.HORIZONTAL_UPWARD_FACING 
                 }
                 
+                if (planes.isNotEmpty() && boxNode == null) {
+                    binding.statusText.text = "Ground plane detected. Tap to place box."
+                }
+                
+                // Update UI overlay on every frame if box is placed
                 updateOverlay(frame)
+                
                 if (isRecording && !isProcessingFrame) {
                     val currentTime = System.currentTimeMillis()
                     if (currentTime - lastFrameTime >= 33) { // ~30 FPS
@@ -178,24 +190,50 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun calculateModelMatrix(anchor: Anchor): FloatArray {
-        // 1. Get Anchor Pose
         val anchorPose = anchor.pose
-        
-        // 2. Create local transformation pose (Translation + Rotation)
-        // Convert Euler angles to Quaternion
         val quat = eulerToQuaternion(rotX, rotY, rotZ)
-        val localPose = Pose.makeTranslation(transX, transY, transZ)
-            .compose(Pose.makeRotation(quat[0], quat[1], quat[2], quat[3]))
         
-        // 3. Combine to get World Pose
-        val worldPose = anchorPose.compose(localPose)
+        // Use manual matrix multiplication for better control over transform order
+        val modelMatrix = FloatArray(16)
+        val translationMatrix = FloatArray(16)
+        val rotationMatrix = FloatArray(16)
+        val scaleMatrix = FloatArray(16)
         
-        // 4. Convert to Matrix and apply Scale
-        val matrix = FloatArray(16)
-        worldPose.toMatrix(matrix, 0)
-        android.opengl.Matrix.scaleM(matrix, 0, scaleX, scaleY, scaleZ)
+        // Initialize matrices
+        Matrix.setIdentityM(translationMatrix, 0)
+        Matrix.setIdentityM(rotationMatrix, 0)
+        Matrix.setIdentityM(scaleMatrix, 0)
         
-        return matrix
+        // 1. Get the anchor matrix
+        val anchorMatrix = FloatArray(16)
+        anchorPose.toMatrix(anchorMatrix, 0)
+        
+        // 2. Build local transforms
+        // Translation in centimeters converted to meters
+        // Apply translation relative to the anchor's coordinate system
+        Matrix.translateM(translationMatrix, 0, transX / 100f, transY / 100f, transZ / 100f)
+        
+        // Create rotation matrix from quaternion
+        val rotationPose = Pose.makeRotation(quat[0], quat[1], quat[2], quat[3])
+        rotationPose.toMatrix(rotationMatrix, 0)
+        
+        // Scale in centimeters converted to meters
+        Matrix.scaleM(scaleMatrix, 0, scaleX / 100f, scaleY / 100f, scaleZ / 100f)
+        
+        // 3. Combine: World = Anchor * Translation * Rotation * Scale
+        // The order matters: we want to translate first (relative to anchor), 
+        // then rotate at that translated position, then scale.
+        val temp1 = FloatArray(16)
+        val temp2 = FloatArray(16)
+        
+        Matrix.multiplyMM(temp1, 0, anchorMatrix, 0, translationMatrix, 0)
+        Matrix.multiplyMM(temp2, 0, temp1, 0, rotationMatrix, 0)
+        Matrix.multiplyMM(modelMatrix, 0, temp2, 0, scaleMatrix, 0)
+        
+        // Log the values for debugging translation issues
+        android.util.Log.d("ARCoreApp", "Trans: $transX, $transY, $transZ | Scale: $scaleX, $scaleY, $scaleZ")
+        
+        return modelMatrix
     }
 
     private fun eulerToQuaternion(pitch: Float, yaw: Float, roll: Float): FloatArray {
@@ -219,17 +257,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupControls() {
-        setupRow(binding.ctrlScaleX, "Scale X", scaleX) { scaleX = it; updateBoxTransform() }
-        setupRow(binding.ctrlScaleY, "Scale Y", scaleY) { scaleY = it; updateBoxTransform() }
-        setupRow(binding.ctrlScaleZ, "Scale Z", scaleZ) { scaleZ = it; updateBoxTransform() }
+        setupRow(binding.ctrlScaleX, "Scale X", scaleX, 0.5f) { scaleX = it }
+        setupRow(binding.ctrlScaleY, "Scale Y", scaleY, 0.5f) { scaleY = it }
+        setupRow(binding.ctrlScaleZ, "Scale Z", scaleZ, 0.5f) { scaleZ = it }
 
-        setupRow(binding.ctrlRotX, "Rot X", rotX, 5f) { rotX = it; updateBoxTransform() }
-        setupRow(binding.ctrlRotY, "Rot Y", rotY, 5f) { rotY = it; updateBoxTransform() }
-        setupRow(binding.ctrlRotZ, "Rot Z", rotZ, 5f) { rotZ = it; updateBoxTransform() }
+        setupRow(binding.ctrlRotX, "Rot X", rotX, 5f) { rotX = it }
+        setupRow(binding.ctrlRotY, "Rot Y", rotY, 5f) { rotY = it }
+        setupRow(binding.ctrlRotZ, "Rot Z", rotZ, 5f) { rotZ = it }
 
-        setupRow(binding.ctrlTransX, "Trans X", transX, 0.01f) { transX = it; updateBoxTransform() }
-        setupRow(binding.ctrlTransY, "Trans Y", transY, 0.01f) { transY = it; updateBoxTransform() }
-        setupRow(binding.ctrlTransZ, "Trans Z", transZ, 0.01f) { transZ = it; updateBoxTransform() }
+        setupRow(binding.ctrlTransX, "Trans X", transX, 1f) { transX = it }
+        setupRow(binding.ctrlTransY, "Trans Y", transY, 1f) { transY = it }
+        setupRow(binding.ctrlTransZ, "Trans Z", transZ, 1f) { transZ = it }
 
         binding.btnRecord.setOnClickListener { toggleRecording() }
         binding.btnExport.setOnClickListener {
@@ -245,20 +283,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupRow(rowBinding: com.example.arcoreapp.databinding.LayoutControlRowBinding, label: String, initialValue: Float, step: Float = 0.005f, onUpdate: (Float) -> Unit) {
+    private fun setupRow(rowBinding: com.example.arcoreapp.databinding.LayoutControlRowBinding, label: String, initialValue: Float, step: Float = 0.5f, onUpdate: (Float) -> Unit) {
         var current = initialValue
         rowBinding.label.text = label
-        rowBinding.valueText.text = String.format("%.3f", current)
+        rowBinding.valueText.text = String.format("%.1f", current)
         rowBinding.btnPlus.setOnClickListener {
             current += step
-            rowBinding.valueText.text = String.format("%.3f", current)
+            rowBinding.valueText.text = String.format("%.1f", current)
             onUpdate(current)
+            // Explicitly trigger transform update for immediate feedback
+            updateBoxTransform()
         }
         rowBinding.btnMinus.setOnClickListener {
             current -= step
-            if (label.contains("Scale") && current < 0.001f) current = 0.001f
-            rowBinding.valueText.text = String.format("%.3f", current)
+            if (label.contains("Scale") && current < 0.1f) current = 0.1f
+            rowBinding.valueText.text = String.format("%.1f", current)
             onUpdate(current)
+            // Explicitly trigger transform update for immediate feedback
+            updateBoxTransform()
         }
     }
 
@@ -319,9 +361,9 @@ class MainActivity : AppCompatActivity() {
         // We still update the transformableNode so it renders correctly in 3D space 
         // if there's any model attached, but our primary tracking is now via calculateModelMatrix.
         transformableNode?.let { node ->
-            node.scale = Scale(scaleX, scaleY, scaleZ)
+            node.scale = Scale(scaleX / 100f, scaleY / 100f, scaleZ / 100f)
             node.rotation = Rotation(rotX, rotY, rotZ)
-            node.position = Position(transX, transY, transZ)
+            node.position = Position(transX / 100f, transY / 100f, transZ / 100f)
         }
     }
 }
