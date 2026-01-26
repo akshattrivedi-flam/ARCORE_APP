@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private var transY = 6f // Center the box so bottom is on plane (12 / 2)
     private var transZ = 0f
 
+    private var lastArFrame: io.github.sceneview.ar.arcore.ArFrame? = null
     private var isRecording = false
     private var isProcessingFrame = false
     private var lastFrameTime = 0L
@@ -116,6 +117,7 @@ class MainActivity : AppCompatActivity() {
             planeRenderer.isVisible = false // Hide the dotted patterns
             
             onArFrame = { frame ->
+                lastArFrame = frame
                 val arFrame = frame.frame
                 
                 // Check all trackables for a stable plane
@@ -144,32 +146,34 @@ class MainActivity : AppCompatActivity() {
             }
 
             onTapAr = { hitResult, motionEvent ->
-                val arFrame = sceneView.arFrame?.frame ?: return@onTapAr
-                val hits = arFrame.hitTest(motionEvent.x, motionEvent.y)
-                
-                // 1. Prioritize Plane hits for maximum stability
-                val planeHit = hits.firstOrNull { hit ->
-                    val trackable = hit.trackable
-                    trackable is Plane && trackable.isPoseInPolygon(hit.hitPose)
-                }
-                
-                // 2. Then try Depth hits for precision on objects
-                val depthHit = hits.firstOrNull { hit ->
-                    hit.trackable is com.google.ar.core.DepthPoint
-                }
+                val frame = lastArFrame?.frame
+                if (frame != null) {
+                    val hits = frame.hitTest(motionEvent.x, motionEvent.y)
+                    
+                    // 1. Prioritize Plane hits for maximum stability
+                    val planeHit = hits.firstOrNull { hit ->
+                        val trackable = hit.trackable
+                        trackable is Plane && trackable.isPoseInPolygon(hit.hitPose)
+                    }
+                    
+                    // 2. Then try Depth hits for precision on objects
+                    val depthHit = hits.firstOrNull { hit ->
+                        hit.trackable is com.google.ar.core.DepthPoint
+                    }
 
-                // Use the best available hit, fallback to the original hitResult
-                val bestHit = planeHit ?: depthHit ?: hitResult
-                val anchor = bestHit.createAnchor()
-                
-                // If we already have a box, move it to the new stable location
-                if (boxNode != null) {
-                    sceneView.removeChild(boxNode!!)
-                    boxNode!!.destroy()
-                    boxNode = null
+                    // Use the best available hit, fallback to the original hitResult
+                    val bestHit = planeHit ?: depthHit ?: hitResult
+                    val anchor = bestHit.createAnchor()
+                    
+                    // If we already have a box, move it to the new stable location
+                    if (boxNode != null) {
+                        sceneView.removeChild(boxNode!!)
+                        boxNode!!.destroy()
+                        boxNode = null
+                    }
+                    
+                    placeBox(anchor)
                 }
-                
-                placeBox(anchor)
             }
         }
     }
