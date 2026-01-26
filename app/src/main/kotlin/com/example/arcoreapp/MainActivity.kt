@@ -16,6 +16,7 @@ import com.google.ar.core.Anchor
 import com.google.ar.core.Config
 import com.google.ar.core.Plane
 import com.google.ar.core.Pose
+import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ArSceneView
 import io.github.sceneview.ar.node.ArNode
@@ -101,16 +102,14 @@ class MainActivity : AppCompatActivity() {
                 
                 // Enable Depth for better anchoring on objects
                 if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
-                    config.setDepthMode(Config.DepthMode.AUTOMATIC)
+                    config.depthMode = Config.DepthMode.AUTOMATIC
                 }
                 
                 // Enable Instant Placement for immediate stability
-                if (session.isInstantPlacementModeSupported(Config.InstantPlacementMode.LOCAL_Y_UP)) {
-                    config.setInstantPlacementMode(Config.InstantPlacementMode.LOCAL_Y_UP)
-                }
+                config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
                 
-                config.setUpdateMode(Config.UpdateMode.LATEST_CAMERA_IMAGE)
-                config.setFocusMode(Config.FocusMode.AUTO)
+                config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+                config.focusMode = Config.FocusMode.AUTO
                 session.configure(config)
             }
 
@@ -120,7 +119,7 @@ class MainActivity : AppCompatActivity() {
                 val arFrame = frame.frame
                 
                 // Check all trackables for a stable plane
-                val allPlanes = session?.getAllTrackables(Plane::class.java) ?: emptyList()
+                val allPlanes = arSession?.getAllTrackables(Plane::class.java) ?: emptyList()
                 val hasStablePlane = allPlanes.any { 
                     it.trackingState == TrackingState.TRACKING && 
                     it.type == Plane.Type.HORIZONTAL_UPWARD_FACING 
