@@ -98,9 +98,17 @@ class MainActivity : AppCompatActivity() {
             // Configure session for depth and stability
             onArSessionCreated = { session ->
                 val config = session.config
+                
+                // Enable Depth for better anchoring on objects
                 if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
                     config.setDepthMode(Config.DepthMode.AUTOMATIC)
                 }
+                
+                // Enable Instant Placement for immediate stability
+                if (session.isInstantPlacementModeSupported(Config.InstantPlacementMode.LOCAL_Y_UP)) {
+                    config.setInstantPlacementMode(Config.InstantPlacementMode.LOCAL_Y_UP)
+                }
+                
                 config.setUpdateMode(Config.UpdateMode.LATEST_CAMERA_IMAGE)
                 config.setFocusMode(Config.FocusMode.AUTO)
                 session.configure(config)
@@ -111,15 +119,17 @@ class MainActivity : AppCompatActivity() {
             onArFrame = { frame ->
                 val arFrame = frame.frame
                 
-                // Filter planes that are tracking and are horizontal upward facing
-                // This ensures we only detect the ground/table surface for stability
-                val planes = arFrame.getUpdatedTrackables(Plane::class.java).filter { 
+                // Check all trackables for a stable plane
+                val allPlanes = session?.getAllTrackables(Plane::class.java) ?: emptyList()
+                val hasStablePlane = allPlanes.any { 
                     it.trackingState == TrackingState.TRACKING && 
                     it.type == Plane.Type.HORIZONTAL_UPWARD_FACING 
                 }
                 
-                if (planes.isNotEmpty() && boxNode == null) {
-                    binding.statusText.text = "Ground plane detected. Tap to place box."
+                if (hasStablePlane && boxNode == null) {
+                    binding.statusText.text = "Surface detected. Tap the object to place box."
+                } else if (boxNode == null) {
+                    binding.statusText.text = "Scanning for surfaces..."
                 }
                 
                 // Update UI overlay on every frame if box is placed
@@ -135,11 +145,17 @@ class MainActivity : AppCompatActivity() {
             }
 
             onTapAr = { hitResult, _ ->
-                if (boxNode == null) {
-                    // Create an anchor at the hit location
-                    val anchor = hitResult.createAnchor()
-                    placeBox(anchor)
+                // Create a stable anchor at the hit location (prioritizes planes and depth)
+                val anchor = hitResult.createAnchor()
+                
+                // If we already have a box, move it to the new stable location
+                if (boxNode != null) {
+                    sceneView.removeChild(boxNode!!)
+                    boxNode!!.destroy()
+                    boxNode = null
                 }
+                
+                placeBox(anchor)
             }
         }
     }
