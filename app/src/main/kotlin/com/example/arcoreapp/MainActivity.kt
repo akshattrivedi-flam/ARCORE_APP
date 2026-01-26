@@ -143,9 +143,24 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            onTapAr = { hitResult, _ ->
-                // Create a stable anchor at the hit location (prioritizes planes and depth)
-                val anchor = hitResult.createAnchor()
+            onTapAr = { hitResult, motionEvent ->
+                val arFrame = sceneView.arFrame?.frame ?: return@onTapAr
+                val hits = arFrame.hitTest(motionEvent.x, motionEvent.y)
+                
+                // 1. Prioritize Plane hits for maximum stability
+                val planeHit = hits.firstOrNull { hit ->
+                    val trackable = hit.trackable
+                    trackable is Plane && trackable.isPoseInPolygon(hit.hitPose)
+                }
+                
+                // 2. Then try Depth hits for precision on objects
+                val depthHit = hits.firstOrNull { hit ->
+                    hit.trackable is com.google.ar.core.DepthPoint
+                }
+
+                // Use the best available hit, fallback to the original hitResult
+                val bestHit = planeHit ?: depthHit ?: hitResult
+                val anchor = bestHit.createAnchor()
                 
                 // If we already have a box, move it to the new stable location
                 if (boxNode != null) {
@@ -183,24 +198,47 @@ class MainActivity : AppCompatActivity() {
         val viewMatrix = FloatArray(16)
         camera.getViewMatrix(viewMatrix, 0)
         
-        // Calculate the model matrix manually for maximum precision and reactivity
         val modelMatrix = calculateModelMatrix(anchor)
 
-        val intrinsics = camera.imageIntrinsics
-        val fx = intrinsics.focalLength[0]
-        val fy = intrinsics.focalLength[1]
-        val cx = intrinsics.principalPoint[0]
-        val cy = intrinsics.principalPoint[1]
-        val width = intrinsics.imageDimensions[0]
-        val height = intrinsics.imageDimensions[1]
-
-        val entry = AnnotationGenerator.createEntry(
-            0, "", modelMatrix, viewMatrix,
-            fx, fy, cx, cy, width, height, 0
+        // 1. Get 3D world points for the cube
+        val keypoints2d = mutableListOf<List<Float>>()
+        val unitCube = listOf(
+            floatArrayOf(0f, 0f, 0f),       // Center
+            floatArrayOf(-0.5f, -0.5f, 0.5f), floatArrayOf(0.5f, -0.5f, 0.5f),
+            floatArrayOf(0.5f, 0.5f, 0.5f), floatArrayOf(-0.5f, 0.5f, 0.5f),
+            floatArrayOf(-0.5f, -0.5f, -0.5f), floatArrayOf(0.5f, -0.5f, -0.5f),
+            floatArrayOf(0.5f, 0.5f, -0.5f), floatArrayOf(-0.5f, 0.5f, -0.5f)
         )
+
+        // 2. Project each point using the display-aware transform
+        for (localPt in unitCube) {
+            val worldPt4 = FloatArray(4)
+            Matrix.multiplyMV(worldPt4, 0, modelMatrix, 0, floatArrayOf(localPt[0], localPt[1], localPt[2], 1.0f), 0)
+            
+            // Project to Camera Image Space (normalized 0..1)
+            val proj = MathUtils.projectPoint(
+                floatArrayOf(worldPt4[0], worldPt4[1], worldPt4[2]),
+                viewMatrix,
+                camera.imageIntrinsics.focalLength[0], camera.imageIntrinsics.focalLength[1],
+                camera.imageIntrinsics.principalPoint[0], camera.imageIntrinsics.principalPoint[1],
+                camera.imageIntrinsics.imageDimensions[0], camera.imageIntrinsics.imageDimensions[1]
+            )
+            
+            // 3. Transform from Camera Image Space to View Space (accounting for crop/scale)
+            val cpuCoords = floatArrayOf(proj[0], proj[1])
+            val viewCoords = FloatArray(2)
+            frame.frame.transformCoordinates2d(
+                com.google.ar.core.Coordinates2d.IMAGE_NORMALIZED,
+                cpuCoords,
+                com.google.ar.core.Coordinates2d.VIEW_NORMALIZED,
+                viewCoords
+            )
+            
+            keypoints2d.add(listOf(viewCoords[0], viewCoords[1], proj[2]))
+        }
         
         runOnUiThread {
-            binding.boxOverlay.updatePoints(entry.keypoints2d)
+            binding.boxOverlay.updatePoints(keypoints2d)
         }
     }
 
