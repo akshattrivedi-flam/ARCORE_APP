@@ -146,49 +146,50 @@ class MainActivity : AppCompatActivity() {
             }
 
             onTapAr = { _, motionEvent ->
-                val arFrame = lastArFrame ?: return@onTapAr
-                val camera = arFrame.camera
-                if (camera.trackingState != TrackingState.TRACKING) return@onTapAr
+                lastArFrame?.let { arFrame ->
+                    val camera = arFrame.camera
+                    if (camera.trackingState == TrackingState.TRACKING) {
+                        val frame = arFrame.frame
+                        val hits = frame.hitTest(motionEvent.x, motionEvent.y)
+                        
+                        // STABILITY PRIORITY LOGIC:
+                        // We want the X,Z of the tap but the Y of the most stable surface (the plane).
+                        // 1. Find the highest stable horizontal plane (usually the table/floor).
+                        val planeHit = hits.firstOrNull { hit ->
+                            val t = hit.trackable
+                            t is Plane && t.trackingState == TrackingState.TRACKING && 
+                            t.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
+                            t.isPoseInPolygon(hit.hitPose)
+                        }
+                        
+                        // 2. Fallback to closest trackable if no plane is found
+                        val bestHit = planeHit ?: hits.firstOrNull { it.trackable.trackingState == TrackingState.TRACKING }
 
-                val frame = arFrame.frame
-                val hits = frame.hitTest(motionEvent.x, motionEvent.y)
-                
-                // STABILITY PRIORITY LOGIC:
-                // We want the X,Z of the tap but the Y of the most stable surface (the plane).
-                // 1. Find the highest stable horizontal plane (usually the table/floor).
-                val planeHit = hits.firstOrNull { hit ->
-                    val t = hit.trackable
-                    t is Plane && t.trackingState == TrackingState.TRACKING && 
-                    t.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
-                    t.isPoseInPolygon(hit.hitPose)
-                }
-                
-                // 2. Fallback to closest trackable if no plane is found
-                val bestHit = planeHit ?: hits.firstOrNull { it.trackable.trackingState == TrackingState.TRACKING }
+                        if (bestHit != null) {
+                            // ABSOLUTE STABILITY: Use the hit's translation but force World Y-up orientation.
+                            val hitPose = bestHit.hitPose
+                            
+                            // If we have a plane hit, we use its Y height for better ground-locking.
+                            val tx = hitPose.tx()
+                            val ty = hitPose.ty()
+                            val tz = hitPose.tz()
+                            
+                            val uprightPose = Pose.makeTranslation(tx, ty, tz)
+                            
+                            // Creating the anchor ON the trackable allows ARCore to correct its drift over time.
+                            val anchor = bestHit.trackable.createAnchor(uprightPose)
+                            
+                            android.util.Log.d("ARCoreApp", "Locked anchor to ${bestHit.trackable::class.java.simpleName} at Y: $ty")
 
-                if (bestHit != null) {
-                    // ABSOLUTE STABILITY: Use the hit's translation but force World Y-up orientation.
-                    val hitPose = bestHit.hitPose
-                    
-                    // If we have a plane hit, we use its Y height for better ground-locking.
-                    val tx = hitPose.tx()
-                    val ty = if (bestHit.trackable is Plane) hitPose.ty() else hitPose.ty()
-                    val tz = hitPose.tz()
-                    
-                    val uprightPose = Pose.makeTranslation(tx, ty, tz)
-                    
-                    // Creating the anchor ON the trackable allows ARCore to correct its drift over time.
-                    val anchor = bestHit.trackable.createAnchor(uprightPose)
-                    
-                    android.util.Log.d("ARCoreApp", "Locked anchor to ${bestHit.trackable::class.java.simpleName} at Y: $ty")
-
-                    boxNode?.let {
-                        sceneView.removeChild(it)
-                        it.destroy()
+                            boxNode?.let {
+                                sceneView.removeChild(it)
+                                it.destroy()
+                            }
+                            placeBox(anchor)
+                        } else {
+                            Toast.makeText(this@MainActivity, "Surface not stable. Move phone to detect planes.", Toast.LENGTH_SHORT).show()
+                        }
                     }
-                    placeBox(anchor)
-                } else {
-                    Toast.makeText(this@MainActivity, "Surface not stable. Move phone to detect planes.", Toast.LENGTH_SHORT).show()
                 }
             }
         }
