@@ -146,45 +146,46 @@ class MainActivity : AppCompatActivity() {
             }
 
             onTapAr = { _, motionEvent ->
-                val arFrame = lastArFrame ?: return@onTapAr
-                val frame = arFrame.frame
-                val hits = frame.hitTest(motionEvent.x, motionEvent.y)
-                
-                // STABILITY PRIORITY:
-                // 1. Refined Horizontal Plane (the ground) - Gold standard for stability
-                // 2. Depth Point (on the object) - Good for precision
-                // 3. Instant Placement (only if refined)
-                
-                val bestHit = hits.firstOrNull { hit ->
-                    val t = hit.trackable
-                    t is Plane && t.trackingState == TrackingState.TRACKING && 
-                    t.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
-                    t.isPoseInPolygon(hit.hitPose)
-                } ?: hits.firstOrNull { hit ->
-                    hit.trackable is com.google.ar.core.DepthPoint && 
-                    hit.trackable.trackingState == TrackingState.TRACKING
-                } ?: hits.firstOrNull { hit ->
-                    hit.trackable.trackingState == TrackingState.TRACKING
-                }
-
-                if (bestHit != null) {
-                    // FORCE GRAVITY ALIGNMENT (Upright Pose)
-                    // Take only (x, y, z) translation. Identity quaternion (0,0,0,1) = upright.
-                    val hitPose = bestHit.hitPose
-                    val uprightPose = Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
+                lastArFrame?.let { arFrame ->
+                    val frame = arFrame.frame
+                    val hits = frame.hitTest(motionEvent.x, motionEvent.y)
                     
-                    // Anchoring to the trackable itself is much more stable than just the session
-                    val anchor = bestHit.trackable.createAnchor(uprightPose)
+                    // STABILITY PRIORITY:
+                    // 1. Refined Horizontal Plane (the ground) - Gold standard for stability
+                    // 2. Depth Point (on the object) - Good for precision
+                    // 3. Instant Placement (only if refined)
                     
-                    android.util.Log.d("ARCoreApp", "Anchored to ${bestHit.trackable::class.java.simpleName} at dist ${bestHit.distance}")
-
-                    boxNode?.let {
-                        sceneView.removeChild(it)
-                        it.destroy()
+                    val bestHit = hits.firstOrNull { hit ->
+                        val t = hit.trackable
+                        t is Plane && t.trackingState == TrackingState.TRACKING && 
+                        t.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
+                        t.isPoseInPolygon(hit.hitPose)
+                    } ?: hits.firstOrNull { hit ->
+                        hit.trackable is com.google.ar.core.DepthPoint && 
+                        hit.trackable.trackingState == TrackingState.TRACKING
+                    } ?: hits.firstOrNull { hit ->
+                        hit.trackable.trackingState == TrackingState.TRACKING
                     }
-                    placeBox(anchor)
-                } else {
-                    Toast.makeText(this@MainActivity, "Surface not stable yet. Move phone around.", Toast.LENGTH_SHORT).show()
+
+                    if (bestHit != null) {
+                        // FORCE GRAVITY ALIGNMENT (Upright Pose)
+                        // Take only (x, y, z) translation. Identity quaternion (0,0,0,1) = upright.
+                        val hitPose = bestHit.hitPose
+                        val uprightPose = Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
+                        
+                        // Anchoring to the trackable itself is much more stable than just the session
+                        val anchor = bestHit.trackable.createAnchor(uprightPose)
+                        
+                        android.util.Log.d("ARCoreApp", "Anchored to ${bestHit.trackable::class.java.simpleName} at dist ${bestHit.distance}")
+
+                        boxNode?.let {
+                            sceneView.removeChild(it)
+                            it.destroy()
+                        }
+                        placeBox(anchor)
+                    } else {
+                        Toast.makeText(this@MainActivity, "Surface not stable yet. Move phone around.", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
