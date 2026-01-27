@@ -146,32 +146,33 @@ class MainActivity : AppCompatActivity() {
             }
 
             onTapAr = { _, motionEvent ->
-                val frame = lastArFrame?.frame ?: return@onTapAr
-                val hits = frame.hitTest(motionEvent.x, motionEvent.y)
-                
-                // Prioritize the CLOSEST hit that is either a stable Horizontal Plane or a Depth Point.
-                // ARCore sorts hits by distance, so firstOrNull gives the closest.
-                val bestHit = hits.firstOrNull { hit ->
-                    val t = hit.trackable
-                    (t is Plane && t.trackingState == TrackingState.TRACKING && t.type == Plane.Type.HORIZONTAL_UPWARD_FACING) ||
-                    (t is com.google.ar.core.DepthPoint && t.trackingState == TrackingState.TRACKING)
-                } ?: hits.firstOrNull { it.trackable.trackingState == TrackingState.TRACKING }
-
-                if (bestHit != null) {
-                    // FORCE GRAVITY ALIGNMENT (Upright Pose)
-                    // This ensures the box stays perpendicular to the ground regardless of the hit surface orientation.
-                    val hitPose = bestHit.hitPose
-                    val uprightPose = Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
+                lastArFrame?.frame?.let { frame ->
+                    val hits = frame.hitTest(motionEvent.x, motionEvent.y)
                     
-                    val anchor = bestHit.trackable.createAnchor(uprightPose)
-                    
-                    android.util.Log.d("ARCoreApp", "Stability: Anchored to ${bestHit.trackable::class.java.simpleName} at dist: ${bestHit.distance}")
+                    // Prioritize the CLOSEST hit that is either a stable Horizontal Plane or a Depth Point.
+                    // ARCore sorts hits by distance, so firstOrNull gives the closest.
+                    val bestHit = hits.firstOrNull { hit ->
+                        val t = hit.trackable
+                        (t is Plane && t.trackingState == TrackingState.TRACKING && t.type == Plane.Type.HORIZONTAL_UPWARD_FACING) ||
+                        (t is com.google.ar.core.DepthPoint && t.trackingState == TrackingState.TRACKING)
+                    } ?: hits.firstOrNull { it.trackable.trackingState == TrackingState.TRACKING }
 
-                    boxNode?.let {
-                        sceneView.removeChild(it)
-                        it.destroy()
+                    if (bestHit != null) {
+                        // FORCE GRAVITY ALIGNMENT (Upright Pose)
+                        // This ensures the box stays perpendicular to the ground regardless of the hit surface orientation.
+                        val hitPose = bestHit.hitPose
+                        val uprightPose = Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
+                        
+                        val anchor = bestHit.trackable.createAnchor(uprightPose)
+                        
+                        android.util.Log.d("ARCoreApp", "Stability: Anchored to ${bestHit.trackable::class.java.simpleName} at dist: ${bestHit.distance}")
+
+                        boxNode?.let {
+                            sceneView.removeChild(it)
+                            it.destroy()
+                        }
+                        placeBox(anchor)
                     }
-                    placeBox(anchor)
                 }
             }
         }
