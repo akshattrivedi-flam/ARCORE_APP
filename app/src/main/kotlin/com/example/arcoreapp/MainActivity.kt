@@ -219,8 +219,8 @@ class MainActivity : AppCompatActivity() {
         val sensorViewMatrix = FloatArray(16)
         cameraPose.inverse().toMatrix(sensorViewMatrix, 0)
         
-        // Use the Node's world matrix (managed by SceneView/Filament) as the source of truth
-        val modelMatrix = node.worldModelMatrix.toData()
+        // Use the manual matrix calculation as the source of truth
+        val modelMatrix = calculateModelMatrix(anchor)
 
         val keypoints2d = mutableListOf<List<Float>>()
         val unitCube = listOf(
