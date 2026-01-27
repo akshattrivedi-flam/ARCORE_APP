@@ -207,16 +207,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateOverlay(frame: io.github.sceneview.ar.arcore.ArFrame) {
+        val node = transformableNode ?: return
         val anchor = boxNode?.anchor ?: return
         if (anchor.trackingState != TrackingState.TRACKING) return
 
         val camera = frame.camera
-        val viewMatrix = FloatArray(16)
-        camera.getViewMatrix(viewMatrix, 0)
         
-        val modelMatrix = calculateModelMatrix(anchor)
+        // EXPERT FIX: Use Sensor-oriented View Matrix for Intrinsics projection
+        // camera.getPose() returns the world-to-camera pose relative to the sensor.
+        val cameraPose = camera.pose
+        val sensorViewMatrix = FloatArray(16)
+        cameraPose.inverse().toMatrix(sensorViewMatrix, 0)
+        
+        // Use the Node's world matrix (managed by SceneView/Filament) as the source of truth
+        val modelMatrix = node.worldModelMatrix.toData()
 
-        // 1. Get 3D world points for the cube
         val keypoints2d = mutableListOf<List<Float>>()
         val unitCube = listOf(
             floatArrayOf(0f, 0f, 0f),       // Center
@@ -226,26 +231,24 @@ class MainActivity : AppCompatActivity() {
             floatArrayOf(0.5f, 0.5f, -0.5f), floatArrayOf(-0.5f, 0.5f, -0.5f)
         )
 
-        // 2. Project each point using the display-aware transform
         for (localPt in unitCube) {
             val worldPt4 = FloatArray(4)
             Matrix.multiplyMV(worldPt4, 0, modelMatrix, 0, floatArrayOf(localPt[0], localPt[1], localPt[2], 1.0f), 0)
             
-            // Project to Camera Image Space (normalized 0..1)
+            // Project to Camera Image Space (normalized 0..1 of the BUFFER)
             val proj = MathUtils.projectPoint(
                 floatArrayOf(worldPt4[0], worldPt4[1], worldPt4[2]),
-                viewMatrix,
+                sensorViewMatrix,
                 camera.imageIntrinsics.focalLength[0], camera.imageIntrinsics.focalLength[1],
                 camera.imageIntrinsics.principalPoint[0], camera.imageIntrinsics.principalPoint[1],
                 camera.imageIntrinsics.imageDimensions[0], camera.imageIntrinsics.imageDimensions[1]
             )
             
-            // 3. Transform from Camera Image Space to View Space (accounting for crop/scale)
-            val cpuCoords = floatArrayOf(proj[0], proj[1])
+            // Transform from Camera Buffer Space to View Screen Space
             val viewCoords = FloatArray(2)
             frame.frame.transformCoordinates2d(
                 com.google.ar.core.Coordinates2d.IMAGE_NORMALIZED,
-                cpuCoords,
+                floatArrayOf(proj[0], proj[1]),
                 com.google.ar.core.Coordinates2d.VIEW_NORMALIZED,
                 viewCoords
             )

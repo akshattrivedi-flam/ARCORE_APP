@@ -27,22 +27,18 @@ object MathUtils {
         val z = pointCamera[2]
 
         // 2. Camera to Image Plane (using intrinsics)
-        // X+ is Right, Y+ is Up, Z- is Forward (opposite of camera looking dir).
-        // Depth is positive distance from camera
+        // X+ is Right, Y+ is Up, Z- is Forward (Camera looks towards -Z).
         val depth = -z 
         
-        // Project to image space (0,0 is center of intrinsics)
+        // Pinhole model: u = fx * (x/z) + cx
         val u = fx * (x / depth) + cx
         
-        // CRITICAL FIX: In camera space Y is UP, but in screen/image space Y is DOWN.
-        // We must negate the Y term to correctly project from camera to image pixels.
+        // In AR/OpenGL, Y is UP. In screen coordinates, Y is DOWN.
+        // v = cy - fy * (y/depth)
         val v = cy - fy * (y / depth) 
 
-        // Normalize to [0..1]
-        val xNorm = u / width
-        val yNorm = v / height
-
-        return floatArrayOf(xNorm, yNorm, depth)
+        // Return normalized buffer coordinates [0..1]
+        return floatArrayOf(u / width, v / height, depth)
     }
 
     /**
