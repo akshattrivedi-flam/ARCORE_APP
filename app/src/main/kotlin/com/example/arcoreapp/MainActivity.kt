@@ -97,8 +97,18 @@ class MainActivity : AppCompatActivity() {
             focusMode = Config.FocusMode.AUTO
             lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
             
-            // Configure session for depth and stability
+            // Configure session for depth, resolution, and stability
             onArSessionCreated = { session ->
+                // OBJECTRON SYNC: Try to find high-res 1440x1920 or similar config
+                val filter = com.google.ar.core.CameraConfigFilter(session)
+                val configs = session.getSupportedCameraConfigs(filter)
+                val highResConfig = configs.maxByOrNull { it.imageSize.width * it.imageSize.height }
+                
+                highResConfig?.let {
+                    android.util.Log.d("ARCoreApp", "Setting resolution to: ${it.imageSize.width}x${it.imageSize.height}")
+                    session.cameraConfig = it
+                }
+
                 val config = session.config
                 
                 // Enable Depth for better anchoring on objects
@@ -435,11 +445,25 @@ class MainActivity : AppCompatActivity() {
         val anchor = boxNode?.anchor ?: return
         isProcessingFrame = true
         val camera = frame.camera
-        val viewMatrix = FloatArray(16)
-        camera.getViewMatrix(viewMatrix, 0)
         
-        // Use the same robust matrix calculation as the overlay
+        // Use sensor-aligned view matrix for Sensor-Space Projection (Objectron Style)
+        val sensorViewMatrix = FloatArray(16)
+        camera.pose.inverse().toMatrix(sensorViewMatrix, 0)
+        
         val modelMatrix = calculateModelMatrix(anchor)
+
+        // Extract Sparse Point Cloud (Features)
+        val pointCloud = mutableListOf<List<Float>>()
+        try {
+            val rawCloud = frame.frame.acquirePointCloud()
+            val buffer = rawCloud.points
+            for (i in 0 until rawCloud.numberOfPoints) {
+                pointCloud.add(listOf(buffer.get(i * 4), buffer.get(i * 4 + 1), buffer.get(i * 4 + 2)))
+            }
+            rawCloud.release()
+        } catch (e: Exception) {
+            // No point cloud this frame
+        }
 
         val intrinsics = camera.imageIntrinsics
         val fx = intrinsics.focalLength[0]
@@ -451,8 +475,9 @@ class MainActivity : AppCompatActivity() {
 
         val frameId = frameCount++
         val imageName = "frame_${String.format("%04d", frameId)}.jpg"
+        
         val entry = AnnotationGenerator.createEntry(
-            frameId, imageName, modelMatrix, viewMatrix,
+            frameId, imageName, modelMatrix, sensorViewMatrix, pointCloud,
             fx, fy, cx, cy, width, height, System.currentTimeMillis()
         )
 
