@@ -106,29 +106,17 @@ class MainActivity : AppCompatActivity() {
             finish()
         }
 
-        // Handle Taps for Anchor Placement (Simplified from previous logic but still stable)
+        // Handle Taps for Anchor Placement (Delegated to Renderer for Thread-Safety)
         glSurfaceView.setOnTouchListener { _, event ->
             if (event.action == android.view.MotionEvent.ACTION_UP) {
-                val frame = arSession?.update() ?: return@setOnTouchListener true
-                val hits = frame.hitTest(event.x, event.y)
-                
-                // Priority: Horizontal Plane -> Depth Point
-                val bestHit = hits.firstOrNull { hit ->
-                    val t = hit.trackable
-                    (t is Plane && t.trackingState == TrackingState.TRACKING && t.type == Plane.Type.HORIZONTAL_UPWARD_FACING) ||
-                    (t is DepthPoint && t.trackingState == TrackingState.TRACKING)
-                } ?: hits.firstOrNull { it.trackable.trackingState == TrackingState.TRACKING }
-
-                if (bestHit != null) {
-                    val hitPose = bestHit.hitPose
-                    val uprightPose = Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
-                    renderer.currentAnchor?.detach()
-                    renderer.currentAnchor = bestHit.trackable.createAnchor(uprightPose)
-                    binding.statusText.text = "Box anchored. Adjust fit below."
-                }
+                renderer.onTouch(event)
             }
             true
         }
+    }
+
+    fun onAnchorPlaced() {
+        binding.statusText.text = "Box anchored. Adjust fit below."
     }
 
     fun onFrameRendered(frame: Frame, mvp: FloatArray, model: FloatArray, view: FloatArray) {
@@ -240,8 +228,7 @@ class MainActivity : AppCompatActivity() {
         renderer.mRotationY = rotY
         renderer.mTranslationX = transX; renderer.mTranslationY = transY; renderer.mTranslationZ = transZ
         
-        renderer.currentAnchor?.detach()
-        renderer.currentAnchor = null
+        renderer.resetAnchor()
         
         binding.statusText.text = "Transforms reset. Tap to re-anchor."
         Toast.makeText(this, "All values reset to defaults", Toast.LENGTH_SHORT).show()

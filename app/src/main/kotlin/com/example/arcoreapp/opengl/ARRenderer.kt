@@ -45,16 +45,29 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
     """.trimIndent()
 
-    // Transform properties (centimeters)
-    var mScaleX = 6.5f
-    var mScaleY = 12.0f
-    var mScaleZ = 6.5f
-    var mRotationY = 0.0f
-    var mTranslationX = 0.0f
-    var mTranslationY = 6.0f
-    var mTranslationZ = 0.0f
+    // Transform properties (centimeters) - MARKED VOLATILE FOR THREAD SAFETY
+    @Volatile var mScaleX = 6.5f
+    @Volatile var mScaleY = 12.0f
+    @Volatile var mScaleZ = 6.5f
+    @Volatile var mRotationY = 0.0f
+    @Volatile var mTranslationX = 0.0f
+    @Volatile var mTranslationY = 6.0f
+    @Volatile var mTranslationZ = 0.0f
 
-    var currentAnchor: Anchor? = null
+    @Volatile var currentAnchor: Anchor? = null
+        private set
+
+    @Synchronized
+    fun resetAnchor() {
+        currentAnchor?.detach()
+        currentAnchor = null
+    }
+
+    private val queuedTaps = java.util.concurrent.ArrayBlockingQueue<android.view.MotionEvent>(16)
+
+    fun onTouch(event: android.view.MotionEvent) {
+        queuedTaps.offer(event)
+    }
 
     fun setArSession(session: Session) {
         this.session = session
@@ -95,6 +108,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
             val camera = frame.camera
 
             backgroundRenderer.draw(frame)
+            handleTaps(frame, camera)
 
             if (camera.trackingState == com.google.ar.core.TrackingState.TRACKING) {
                 val anchor = currentAnchor
@@ -122,6 +136,35 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         } catch (t: Throwable) {
             // Avoid crashing
+        }
+    }
+
+    private fun handleTaps(frame: com.google.ar.core.Frame, camera: com.google.ar.core.Camera) {
+        val tap = queuedTaps.poll() ?: return
+        if (camera.trackingState != com.google.ar.core.TrackingState.TRACKING) return
+
+        val hits = frame.hitTest(tap)
+        // Priority: Horizontal Plane -> Depth Point
+        val bestHit = hits.firstOrNull { hit ->
+            val t = hit.trackable
+            (t is com.google.ar.core.Plane && t.trackingState == com.google.ar.core.TrackingState.TRACKING && 
+             t.type == com.google.ar.core.Plane.Type.HORIZONTAL_UPWARD_FACING) ||
+            (t is com.google.ar.core.DepthPoint && t.trackingState == com.google.ar.core.TrackingState.TRACKING)
+        } ?: hits.firstOrNull { it.trackable.trackingState == com.google.ar.core.TrackingState.TRACKING }
+
+        if (bestHit != null) {
+            val hitPose = bestHit.hitPose
+            val uprightPose = com.google.ar.core.Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
+            
+            // GL Thread safe update
+            resetAnchor()
+            synchronized(this) {
+                currentAnchor = bestHit.trackable.createAnchor(uprightPose)
+            }
+            
+            (context as MainActivity).runOnUiThread {
+                context.onAnchorPlaced()
+            }
         }
     }
 
