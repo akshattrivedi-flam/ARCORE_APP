@@ -44,10 +44,6 @@ dependencies {
     // ARCore
     implementation 'com.google.ar:core:1.41.0'
 
-    // SceneView (Modern Sceneform alternative)
-    implementation "io.github.sceneview:sceneview:0.10.0"
-    implementation "io.github.sceneview:arsceneview:0.10.0"
-
     // JSON
     implementation 'com.google.code.gson:gson:2.10.1'
 

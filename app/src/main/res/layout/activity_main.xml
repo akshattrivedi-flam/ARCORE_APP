@@ -6,13 +6,8 @@
     android:layout_height="match_parent"
     tools:context=".MainActivity">
 
-    <io.github.sceneview.ar.ArSceneView
-        android:id="@+id/sceneView"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
-
-    <com.example.arcoreapp.BoundingBoxOverlay
-        android:id="@+id/boxOverlay"
+    <android.opengl.GLSurfaceView
+        android:id="@+id/glSurfaceView"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 

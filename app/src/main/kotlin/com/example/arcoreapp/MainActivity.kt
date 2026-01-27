@@ -3,6 +3,7 @@ package com.example.arcoreapp
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.opengl.GLSurfaceView
 import android.opengl.Matrix
 import android.os.Bundle
 import android.view.PixelCopy
@@ -10,43 +11,30 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
 import com.example.arcoreapp.databinding.ActivityMainBinding
-import com.google.ar.core.Anchor
-import com.google.ar.core.Config
-import com.google.ar.core.Plane
-import com.google.ar.core.Pose
-import com.google.ar.core.Session
-import com.google.ar.core.TrackingState
-import io.github.sceneview.ar.ArSceneView
-import io.github.sceneview.ar.node.ArNode
-import io.github.sceneview.math.Rotation
-import io.github.sceneview.math.Scale
-import io.github.sceneview.math.Position
-import kotlinx.coroutines.launch
+import com.example.arcoreapp.opengl.ARRenderer
+import com.google.ar.core.*
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private lateinit var sceneView: ArSceneView
-    private var boxNode: ArNode? = null // This will be the anchored parent
-    private var transformableNode: ArNode? = null // This will be the child we transform
+    private lateinit var glSurfaceView: GLSurfaceView
+    private lateinit var renderer: ARRenderer
+    private var arSession: Session? = null
+    
     private lateinit var captureManager: CaptureManager
     private var frameCount = 0
 
-    // Box properties (Manual fitting) - values in centimeters
+    // Transform properties (Manual fitting) - values in centimeters
     private var scaleX = 6.5f
     private var scaleY = 12f
     private var scaleZ = 6.5f
-    private var rotX = 0f
     private var rotY = 0f
-    private var rotZ = 0f
     private var transX = 0f
-    private var transY = 6f // Center the box so bottom is on plane (12 / 2)
+    private var transY = 6f
     private var transZ = 0f
 
-    private var lastArFrame: io.github.sceneview.ar.arcore.ArFrame? = null
     private var isRecording = false
     private var isProcessingFrame = false
     private var lastFrameTime = 0L
@@ -60,11 +48,11 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        sceneView = binding.sceneView
+        glSurfaceView = binding.glSurfaceView
         captureManager = CaptureManager(this)
 
         if (checkCameraPermission()) {
-            setupScene()
+            setupAR()
         } else {
             requestCameraPermission()
         }
@@ -83,7 +71,7 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == CAMERA_PERMISSION_CODE) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                setupScene()
+                setupAR()
             } else {
                 Toast.makeText(this, "Camera permission is required for AR", Toast.LENGTH_LONG).show()
                 finish()
@@ -91,272 +79,140 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupScene() {
-        sceneView.apply {
-            planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
-            focusMode = Config.FocusMode.AUTO
-            lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
-            
-            // Configure session for depth, resolution, and stability
-            onArSessionCreated = { session ->
-                // OBJECTRON SYNC: Try to find high-res 1440x1920 or similar config
-                val filter = com.google.ar.core.CameraConfigFilter(session)
-                val configs = session.getSupportedCameraConfigs(filter)
-                val highResConfig = configs.maxByOrNull { it.imageSize.width * it.imageSize.height }
-                
-                highResConfig?.let {
-                    android.util.Log.d("ARCoreApp", "Setting resolution to: ${it.imageSize.width}x${it.imageSize.height}")
-                    session.cameraConfig = it
-                }
+    private fun setupAR() {
+        renderer = ARRenderer(this)
+        glSurfaceView.preserveEGLContextOnPause = true
+        glSurfaceView.setEGLContextClientVersion(3)
+        glSurfaceView.setRenderer(renderer)
+        glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
 
-                val config = session.config
-                
-                // Enable Depth for better anchoring on objects
-                if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
-                    config.depthMode = Config.DepthMode.AUTOMATIC
-                }
-                
-                // Enable Instant Placement for immediate stability
-                config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
-                
-                config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                config.focusMode = Config.FocusMode.AUTO
-                session.configure(config)
+        try {
+            arSession = Session(this)
+            val config = Config(arSession)
+            
+            // Enable Depth for better anchoring
+            if (arSession!!.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+                config.depthMode = Config.DepthMode.AUTOMATIC
             }
-
-            planeRenderer.isVisible = false // Hide the dotted patterns
             
-            onArFrame = { frame ->
-                lastArFrame = frame
-                val arFrame = frame.frame
+            config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
+            config.focusMode = Config.FocusMode.AUTO
+            config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+            arSession!!.configure(config)
+            
+            renderer.setArSession(arSession!!)
+        } catch (e: Exception) {
+            Toast.makeText(this, "ARCore not supported", Toast.LENGTH_LONG).show()
+            finish()
+        }
+
+        // Handle Taps for Anchor Placement (Simplified from previous logic but still stable)
+        glSurfaceView.setOnTouchListener { _, event ->
+            if (event.action == android.view.MotionEvent.ACTION_UP) {
+                val frame = arSession?.update() ?: return@setOnTouchListener true
+                val hits = frame.hitTest(event.x, event.y)
                 
-                // Check all trackables for a stable plane
-                val allPlanes = arSession?.getAllTrackables(Plane::class.java) ?: emptyList()
-                val hasStablePlane = allPlanes.any { 
-                    it.trackingState == TrackingState.TRACKING && 
-                    it.type == Plane.Type.HORIZONTAL_UPWARD_FACING 
-                }
-                
-                if (hasStablePlane && boxNode == null) {
-                    binding.statusText.text = "Surface detected. Tap the object to place box."
-                } else if (boxNode == null) {
-                    binding.statusText.text = "Scanning for surfaces..."
-                }
-                
-                // Update UI overlay on every frame if box is placed
-                updateOverlay(frame)
-                
-                if (isRecording && !isProcessingFrame) {
-                    val currentTime = System.currentTimeMillis()
-                    if (currentTime - lastFrameTime >= 33) { // ~30 FPS
-                        processFrameForRecording(frame)
-                        lastFrameTime = currentTime
-                    }
+                // Priority: Horizontal Plane -> Depth Point
+                val bestHit = hits.firstOrNull { hit ->
+                    val t = hit.trackable
+                    (t is Plane && t.trackingState == TrackingState.TRACKING && t.type == Plane.Type.HORIZONTAL_UPWARD_FACING) ||
+                    (t is DepthPoint && t.trackingState == TrackingState.TRACKING)
+                } ?: hits.firstOrNull { it.trackable.trackingState == TrackingState.TRACKING }
+
+                if (bestHit != null) {
+                    val hitPose = bestHit.hitPose
+                    val uprightPose = Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
+                    renderer.currentAnchor?.detach()
+                    renderer.currentAnchor = bestHit.trackable.createAnchor(uprightPose)
+                    binding.statusText.text = "Box anchored. Adjust fit below."
                 }
             }
+            true
+        }
+    }
 
-            onTapAr = { _, motionEvent ->
-                lastArFrame?.let { arFrame ->
-                    val camera = arFrame.camera
-                    if (camera.trackingState == TrackingState.TRACKING) {
-                        val frame = arFrame.frame
-                        val hits = frame.hitTest(motionEvent.x, motionEvent.y)
-                        
-                        // STABILITY PRIORITY LOGIC:
-                        // We want the X,Z of the tap but the Y of the most stable surface (the plane).
-                        // 1. Find the highest stable horizontal plane (usually the table/floor).
-                        val planeHit = hits.firstOrNull { hit ->
-                            val t = hit.trackable
-                            t is Plane && t.trackingState == TrackingState.TRACKING && 
-                            t.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
-                            t.isPoseInPolygon(hit.hitPose)
-                        }
-                        
-                        // 2. Fallback to closest trackable if no plane is found
-                        val bestHit = planeHit ?: hits.firstOrNull { it.trackable.trackingState == TrackingState.TRACKING }
-
-                        if (bestHit != null) {
-                            // ABSOLUTE STABILITY: Use the hit's translation but force World Y-up orientation.
-                            val hitPose = bestHit.hitPose
-                            
-                            // If we have a plane hit, we use its Y height for better ground-locking.
-                            val tx = hitPose.tx()
-                            val ty = hitPose.ty()
-                            val tz = hitPose.tz()
-                            
-                            val uprightPose = Pose.makeTranslation(tx, ty, tz)
-                            
-                            // Creating the anchor ON the trackable allows ARCore to correct its drift over time.
-                            val anchor = bestHit.trackable.createAnchor(uprightPose)
-                            
-                            android.util.Log.d("ARCoreApp", "Locked anchor to ${bestHit.trackable::class.java.simpleName} at Y: $ty")
-
-                            boxNode?.let {
-                                sceneView.removeChild(it)
-                                it.destroy()
-                            }
-                            placeBox(anchor)
-                        } else {
-                            Toast.makeText(this@MainActivity, "Surface not stable. Move phone to detect planes.", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
+    fun onFrameRendered(frame: Frame, mvp: FloatArray, model: FloatArray, view: FloatArray) {
+        if (isRecording && !isProcessingFrame) {
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastFrameTime >= 33) { // ~30 FPS
+                processFrameForRecording(frame, model, view, mvp)
+                lastFrameTime = currentTime
+            }
+        }
+        
+        // Update UI status
+        runOnUiThread {
+            if (renderer.currentAnchor == null) {
+                binding.statusText.text = "Scanning for surfaces... Tap to place."
             }
         }
     }
 
-    private fun placeBox(anchor: Anchor) {
-        val node = ArNode(sceneView.engine)
-        node.anchor = anchor
-        sceneView.addChild(node)
-        boxNode = node
-        
-        // Transformable child node for visual representation
-        val childNode = ArNode(sceneView.engine)
-        node.addChild(childNode)
-        transformableNode = childNode
-
-        updateBoxTransform()
-        binding.statusText.text = "Box locked to surface. Adjust fit below."
-    }
-
-    private fun updateOverlay(frame: io.github.sceneview.ar.arcore.ArFrame) {
-        val node = transformableNode ?: return
-        val anchor = boxNode?.anchor ?: return
-        if (anchor.trackingState != TrackingState.TRACKING) return
-
+    private fun processFrameForRecording(frame: Frame, model: FloatArray, view: FloatArray, mvp: FloatArray) {
+        isProcessingFrame = true
         val camera = frame.camera
         
-        // EXPERT FIX: Use Sensor-oriented View Matrix for Intrinsics projection
-        // camera.getPose() returns the world-to-camera pose relative to the sensor.
-        val cameraPose = camera.pose
+        // OBJECTRON PERFECT SYNC: Use direct sensor view matrix
         val sensorViewMatrix = FloatArray(16)
-        cameraPose.inverse().toMatrix(sensorViewMatrix, 0)
-        
-        // Use the manual matrix calculation as the source of truth
-        val modelMatrix = calculateModelMatrix(anchor)
+        camera.pose.inverse().toMatrix(sensorViewMatrix, 0)
 
-        val keypoints2d = mutableListOf<List<Float>>()
-        val unitCube = listOf(
-            floatArrayOf(0f, 0f, 0f),       // Center
-            floatArrayOf(-0.5f, -0.5f, 0.5f), floatArrayOf(0.5f, -0.5f, 0.5f),
-            floatArrayOf(0.5f, 0.5f, 0.5f), floatArrayOf(-0.5f, 0.5f, 0.5f),
-            floatArrayOf(-0.5f, -0.5f, -0.5f), floatArrayOf(0.5f, -0.5f, -0.5f),
-            floatArrayOf(0.5f, 0.5f, -0.5f), floatArrayOf(-0.5f, 0.5f, -0.5f)
+        // Extract Sparse Point Cloud
+        val pointCloud = mutableListOf<List<Float>>()
+        try {
+            val rawCloud = frame.acquirePointCloud()
+            val buffer = rawCloud.points
+            val count = buffer.remaining() / 4
+            for (i in 0 until count) {
+                pointCloud.add(listOf(buffer.get(i * 4), buffer.get(i * 4 + 1), buffer.get(i * 4 + 2)))
+            }
+            rawCloud.release()
+        } catch (e: Exception) {}
+
+        val intrinsics = camera.imageIntrinsics
+        val frameId = frameCount++
+        val imageName = "frame_${String.format("%04d", frameId)}.jpg"
+        
+        val entry = AnnotationGenerator.createEntry(
+            frameId, imageName, model, sensorViewMatrix, mvp, pointCloud,
+            intrinsics.focalLength[0], intrinsics.focalLength[1],
+            intrinsics.principalPoint[0], intrinsics.principalPoint[1],
+            intrinsics.imageDimensions[0], intrinsics.imageDimensions[1],
+            System.currentTimeMillis()
         )
 
-        for (localPt in unitCube) {
-            val worldPt4 = FloatArray(4)
-            Matrix.multiplyMV(worldPt4, 0, modelMatrix, 0, floatArrayOf(localPt[0], localPt[1], localPt[2], 1.0f), 0)
-            
-            // Project to Camera Image Space (normalized 0..1 of the BUFFER)
-            val proj = MathUtils.projectPoint(
-                floatArrayOf(worldPt4[0], worldPt4[1], worldPt4[2]),
-                sensorViewMatrix,
-                camera.imageIntrinsics.focalLength[0], camera.imageIntrinsics.focalLength[1],
-                camera.imageIntrinsics.principalPoint[0], camera.imageIntrinsics.principalPoint[1],
-                camera.imageIntrinsics.imageDimensions[0], camera.imageIntrinsics.imageDimensions[1]
-            )
-            
-            // Transform from Camera Buffer Space to View Screen Space
-            val viewCoords = FloatArray(2)
-            frame.frame.transformCoordinates2d(
-                com.google.ar.core.Coordinates2d.IMAGE_NORMALIZED,
-                floatArrayOf(proj[0], proj[1]),
-                com.google.ar.core.Coordinates2d.VIEW_NORMALIZED,
-                viewCoords
-            )
-            
-            keypoints2d.add(listOf(viewCoords[0], viewCoords[1], proj[2]))
-        }
-        
-        runOnUiThread {
-            binding.boxOverlay.updatePoints(keypoints2d)
-        }
+        // CAPTURE RAW FRAME WITH OVERLAY
+        // We capture binding.root or glSurfaceView to ensure annotations are saved in the frame as requested.
+        val bitmap = Bitmap.createBitmap(glSurfaceView.width, glSurfaceView.height, Bitmap.Config.ARGB_8888)
+        PixelCopy.request(glSurfaceView, bitmap, { result ->
+            if (result == PixelCopy.SUCCESS) {
+                captureManager.saveFrame(bitmap, entry)
+            }
+            isProcessingFrame = false
+        }, glSurfaceView.handler)
     }
 
-    private fun calculateModelMatrix(anchor: Anchor): FloatArray {
-        val anchorPose = anchor.pose
-        val quat = eulerToQuaternion(rotX, rotY, rotZ)
-        
-        // Use manual matrix multiplication for better control over transform order
-        val modelMatrix = FloatArray(16)
-        val translationMatrix = FloatArray(16)
-        val rotationMatrix = FloatArray(16)
-        val scaleMatrix = FloatArray(16)
-        
-        // Initialize matrices
-        Matrix.setIdentityM(translationMatrix, 0)
-        Matrix.setIdentityM(rotationMatrix, 0)
-        Matrix.setIdentityM(scaleMatrix, 0)
-        
-        // 1. Get the anchor matrix - FORCE UPRIGHT if on horizontal plane
-        val anchorMatrix = FloatArray(16)
-        
-        // Extract translation from anchor pose
-        val tx = anchorPose.tx()
-        val ty = anchorPose.ty()
-        val tz = anchorPose.tz()
-        
-        // Check if the anchor is from a horizontal plane (using our gravity-aligned logic from onTapAr)
-        // Even if not, we force identity rotation (Y-up) for the anchor base to prevent tilt.
-        val uprightPose = Pose.makeTranslation(tx, ty, tz)
-        uprightPose.toMatrix(anchorMatrix, 0)
-        
-        // 2. Build local transforms
-        // Translation in centimeters converted to meters
-        Matrix.translateM(translationMatrix, 0, transX / 100f, transY / 100f, transZ / 100f)
-        
-        // Create rotation matrix from quaternion
-        val rotationPose = Pose.makeRotation(quat[0], quat[1], quat[2], quat[3])
-        rotationPose.toMatrix(rotationMatrix, 0)
-        
-        // Scale in centimeters converted to meters
-        Matrix.scaleM(scaleMatrix, 0, scaleX / 100f, scaleY / 100f, scaleZ / 100f)
-        
-        // 3. Combine: World = Anchor(Translation Only) * Translation * Rotation * Scale
-        val temp1 = FloatArray(16)
-        val temp2 = FloatArray(16)
-        
-        Matrix.multiplyMM(temp1, 0, anchorMatrix, 0, translationMatrix, 0)
-        Matrix.multiplyMM(temp2, 0, temp1, 0, rotationMatrix, 0)
-        Matrix.multiplyMM(modelMatrix, 0, temp2, 0, scaleMatrix, 0)
-        
-        return modelMatrix
+    override fun onResume() {
+        super.onResume()
+        arSession?.resume()
+        glSurfaceView.onResume()
     }
 
-    private fun eulerToQuaternion(pitch: Float, yaw: Float, roll: Float): FloatArray {
-        val p = Math.toRadians(pitch.toDouble()).toFloat()
-        val y = Math.toRadians(yaw.toDouble()).toFloat()
-        val r = Math.toRadians(roll.toDouble()).toFloat()
-
-        val c1 = Math.cos((y / 2).toDouble()).toFloat()
-        val s1 = Math.sin((y / 2).toDouble()).toFloat()
-        val c2 = Math.cos((p / 2).toDouble()).toFloat()
-        val s2 = Math.sin((p / 2).toDouble()).toFloat()
-        val c3 = Math.cos((r / 2).toDouble()).toFloat()
-        val s3 = Math.sin((r / 2).toDouble()).toFloat()
-
-        return floatArrayOf(
-            s1 * s2 * c3 + c1 * c2 * s3, // x
-            s1 * c2 * c3 + c1 * s2 * s3, // y
-            c1 * s2 * c3 - s1 * c2 * s3, // z
-            c1 * c2 * c3 - s1 * s2 * s3  // w
-        )
+    override fun onPause() {
+        super.onPause()
+        arSession?.pause()
+        glSurfaceView.onPause()
     }
 
     private fun setupControls() {
-        setupRow(binding.ctrlScaleX, "Scale X", scaleX, 0.5f) { scaleX = it }
-        setupRow(binding.ctrlScaleY, "Scale Y", scaleY, 0.5f) { scaleY = it }
-        setupRow(binding.ctrlScaleZ, "Scale Z", scaleZ, 0.5f) { scaleZ = it }
+        setupRow(binding.ctrlScaleX, "Scale X", scaleX, 0.5f) { scaleX = it; renderer.mScaleX = it }
+        setupRow(binding.ctrlScaleY, "Scale Y", scaleY, 0.5f) { scaleY = it; renderer.mScaleY = it }
+        setupRow(binding.ctrlScaleZ, "Scale Z", scaleZ, 0.5f) { scaleZ = it; renderer.mScaleZ = it }
 
-        setupRow(binding.ctrlRotX, "Rot X", rotX, 5f) { rotX = it }
-        setupRow(binding.ctrlRotY, "Rot Y", rotY, 5f) { rotY = it }
-        setupRow(binding.ctrlRotZ, "Rot Z", rotZ, 5f) { rotZ = it }
+        setupRow(binding.ctrlRotY, "Rot Y", rotY, 5f) { rotY = it; renderer.mRotationY = it }
 
-        setupRow(binding.ctrlTransX, "Trans X", transX, 1f) { transX = it }
-        setupRow(binding.ctrlTransY, "Trans Y", transY, 1f) { transY = it }
-        setupRow(binding.ctrlTransZ, "Trans Z", transZ, 1f) { transZ = it }
+        setupRow(binding.ctrlTransX, "Trans X", transX, 1f) { transX = it; renderer.mTranslationX = it }
+        setupRow(binding.ctrlTransY, "Trans Y", transY, 1f) { transY = it; renderer.mTranslationY = it }
+        setupRow(binding.ctrlTransZ, "Trans Z", transZ, 1f) { transZ = it; renderer.mTranslationZ = it }
 
         binding.btnRecord.setOnClickListener { toggleRecording() }
         binding.btnExport.setOnClickListener {
@@ -376,26 +232,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resetTransforms() {
-        scaleX = 6.5f
-        scaleY = 12f
-        scaleZ = 6.5f
-        rotX = 0f
+        scaleX = 6.5f; scaleY = 12f; scaleZ = 6.5f
         rotY = 0f
-        rotZ = 0f
-        transX = 0f
-        transY = 6f
-        transZ = 0f
+        transX = 0f; transY = 6f; transZ = 0f
         
-        // Remove existing box to force a clean re-anchor if desired
-        boxNode?.let {
-            sceneView.removeChild(it)
-            it.destroy()
-        }
-        boxNode = null
-        transformableNode = null
+        renderer.mScaleX = scaleX; renderer.mScaleY = scaleY; renderer.mScaleZ = scaleZ
+        renderer.mRotationY = rotY
+        renderer.mTranslationX = transX; renderer.mTranslationY = transY; renderer.mTranslationZ = transZ
         
-        // Update all UI labels
-        setupControls() 
+        renderer.currentAnchor?.detach()
+        renderer.currentAnchor = null
         
         binding.statusText.text = "Transforms reset. Tap to re-anchor."
         Toast.makeText(this, "All values reset to defaults", Toast.LENGTH_SHORT).show()
@@ -409,22 +255,18 @@ class MainActivity : AppCompatActivity() {
             current += step
             rowBinding.valueText.text = String.format("%.1f", current)
             onUpdate(current)
-            // Explicitly trigger transform update for immediate feedback
-            updateBoxTransform()
         }
         rowBinding.btnMinus.setOnClickListener {
             current -= step
             if (label.contains("Scale") && current < 0.1f) current = 0.1f
             rowBinding.valueText.text = String.format("%.1f", current)
             onUpdate(current)
-            // Explicitly trigger transform update for immediate feedback
-            updateBoxTransform()
         }
     }
 
     private fun toggleRecording() {
         if (!isRecording) {
-            if (boxNode == null) {
+            if (renderer.currentAnchor == null) {
                 Toast.makeText(this, "Place box first!", Toast.LENGTH_SHORT).show()
                 return
             }
@@ -438,66 +280,6 @@ class MainActivity : AppCompatActivity() {
             captureManager.finishSequence()
             binding.btnRecord.text = "START RECORDING"
             binding.fpsText.text = "Status: IDLE (Saved ${frameCount} frames)"
-        }
-    }
-
-    private fun processFrameForRecording(frame: io.github.sceneview.ar.arcore.ArFrame) {
-        val anchor = boxNode?.anchor ?: return
-        isProcessingFrame = true
-        val camera = frame.camera
-        
-        // Use sensor-aligned view matrix for Sensor-Space Projection (Objectron Style)
-        val sensorViewMatrix = FloatArray(16)
-        camera.pose.inverse().toMatrix(sensorViewMatrix, 0)
-        
-        val modelMatrix = calculateModelMatrix(anchor)
-
-        // Extract Sparse Point Cloud (Features)
-        val pointCloud = mutableListOf<List<Float>>()
-        try {
-            val rawCloud = frame.frame.acquirePointCloud()
-            val buffer = rawCloud.points // FloatBuffer [x, y, z, confidence, ...]
-            val count = buffer.remaining() / 4
-            for (i in 0 until count) {
-                pointCloud.add(listOf(buffer.get(i * 4), buffer.get(i * 4 + 1), buffer.get(i * 4 + 2)))
-            }
-            rawCloud.release()
-        } catch (e: Exception) {
-            // No point cloud this frame
-        }
-
-        val intrinsics = camera.imageIntrinsics
-        val fx = intrinsics.focalLength[0]
-        val fy = intrinsics.focalLength[1]
-        val cx = intrinsics.principalPoint[0]
-        val cy = intrinsics.principalPoint[1]
-        val width = intrinsics.imageDimensions[0]
-        val height = intrinsics.imageDimensions[1]
-
-        val frameId = frameCount++
-        val imageName = "frame_${String.format("%04d", frameId)}.jpg"
-        
-        val entry = AnnotationGenerator.createEntry(
-            frameId, imageName, modelMatrix, sensorViewMatrix, pointCloud,
-            fx, fy, cx, cy, width, height, System.currentTimeMillis()
-        )
-
-        val bitmap = Bitmap.createBitmap(sceneView.width, sceneView.height, Bitmap.Config.ARGB_8888)
-        PixelCopy.request(sceneView, bitmap, { result ->
-            if (result == PixelCopy.SUCCESS) {
-                captureManager.saveFrame(bitmap, entry)
-            }
-            isProcessingFrame = false
-        }, sceneView.handler)
-    }
-
-    private fun updateBoxTransform() {
-        // We still update the transformableNode so it renders correctly in 3D space 
-        // if there's any model attached, but our primary tracking is now via calculateModelMatrix.
-        transformableNode?.let { node ->
-            node.scale = Scale(scaleX / 100f, scaleY / 100f, scaleZ / 100f)
-            node.rotation = Rotation(rotX, rotY, rotZ)
-            node.position = Position(transX / 100f, transY / 100f, transZ / 100f)
         }
     }
 }
