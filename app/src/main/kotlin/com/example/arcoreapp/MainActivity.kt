@@ -145,49 +145,32 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            onTapAr = { hitResult, motionEvent ->
-                val frame = lastArFrame?.frame
-                if (frame != null) {
-                    val hits = frame.hitTest(motionEvent.x, motionEvent.y)
-                    
-                    // 1. Prioritize Plane hits for maximum stability
-                    val planeHit = hits.firstOrNull { hit ->
-                        val trackable = hit.trackable
-                        trackable is Plane && 
-                        trackable.trackingState == TrackingState.TRACKING &&
-                        trackable.isPoseInPolygon(hit.hitPose)
-                    }
-                    
-                    // 2. Then try Depth hits for precision on objects
-                    val depthHit = hits.firstOrNull { hit ->
-                        hit.trackable is com.google.ar.core.DepthPoint &&
-                        hit.trackable.trackingState == TrackingState.TRACKING
-                    }
+            onTapAr = { _, motionEvent ->
+                val frame = lastArFrame?.frame ?: return@onTapAr
+                val hits = frame.hitTest(motionEvent.x, motionEvent.y)
+                
+                // Prioritize the CLOSEST hit that is either a stable Horizontal Plane or a Depth Point.
+                // ARCore sorts hits by distance, so firstOrNull gives the closest.
+                val bestHit = hits.firstOrNull { hit ->
+                    val t = hit.trackable
+                    (t is Plane && t.trackingState == TrackingState.TRACKING && t.type == Plane.Type.HORIZONTAL_UPWARD_FACING) ||
+                    (t is com.google.ar.core.DepthPoint && t.trackingState == TrackingState.TRACKING)
+                } ?: hits.firstOrNull { it.trackable.trackingState == TrackingState.TRACKING }
 
-                    // Use the best available hit, fallback to the original hitResult
-                    val bestHit = planeHit ?: depthHit ?: hitResult
+                if (bestHit != null) {
+                    // FORCE GRAVITY ALIGNMENT (Upright Pose)
+                    // This ensures the box stays perpendicular to the ground regardless of the hit surface orientation.
+                    val hitPose = bestHit.hitPose
+                    val uprightPose = Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
                     
-                    // IMPROVEMENT: Force gravity-aligned orientation for horizontal surfaces
-                    val pose = bestHit.hitPose
-                    val gravityAlignedPose = if (bestHit.trackable is Plane && 
-                        (bestHit.trackable as Plane).type == Plane.Type.HORIZONTAL_UPWARD_FACING) {
-                        // Keep translation, but reset rotation to be gravity-aligned (Y-up)
-                        Pose.makeTranslation(pose.tx(), pose.ty(), pose.tz())
-                    } else {
-                        pose
-                    }
+                    val anchor = bestHit.trackable.createAnchor(uprightPose)
+                    
+                    android.util.Log.d("ARCoreApp", "Stability: Anchored to ${bestHit.trackable::class.java.simpleName} at dist: ${bestHit.distance}")
 
-                    val anchor = bestHit.trackable.createAnchor(gravityAlignedPose)
-                    
-                    android.util.Log.d("ARCoreApp", "New anchor created. Trackable: ${bestHit.trackable::class.java.simpleName}")
-
-                    // If we already have a box, move it to the new stable location
-                    if (boxNode != null) {
-                        sceneView.removeChild(boxNode!!)
-                        boxNode!!.destroy()
-                        boxNode = null
+                    boxNode?.let {
+                        sceneView.removeChild(it)
+                        it.destroy()
                     }
-                    
                     placeBox(anchor)
                 }
             }
@@ -200,14 +183,13 @@ class MainActivity : AppCompatActivity() {
         sceneView.addChild(node)
         boxNode = node
         
-        // We still create a child node for visual representation if needed, 
-        // but our overlay logic uses calculateModelMatrix(anchor).
+        // Transformable child node for visual representation
         val childNode = ArNode(sceneView.engine)
         node.addChild(childNode)
         transformableNode = childNode
 
         updateBoxTransform()
-        binding.statusText.text = "Box placed. Use buttons to fit the can."
+        binding.statusText.text = "Box anchored. Refine fit with buttons."
     }
 
     private fun updateOverlay(frame: io.github.sceneview.ar.arcore.ArFrame) {
