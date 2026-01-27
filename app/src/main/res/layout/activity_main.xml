@@ -80,6 +80,15 @@
                     android:layout_weight="1"
                     android:text="Export Zip"
                     android:layout_marginStart="8dp" />
+
+                <Button
+                    android:id="@+id/btnReset"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Reset"
+                    android:backgroundTint="#808080"
+                    android:layout_marginStart="8dp" />
             </LinearLayout>
 
             <TextView

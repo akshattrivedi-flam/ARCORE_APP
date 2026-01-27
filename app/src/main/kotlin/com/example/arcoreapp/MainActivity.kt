@@ -153,18 +153,34 @@ class MainActivity : AppCompatActivity() {
                     // 1. Prioritize Plane hits for maximum stability
                     val planeHit = hits.firstOrNull { hit ->
                         val trackable = hit.trackable
-                        trackable is Plane && trackable.isPoseInPolygon(hit.hitPose)
+                        trackable is Plane && 
+                        trackable.trackingState == TrackingState.TRACKING &&
+                        trackable.isPoseInPolygon(hit.hitPose)
                     }
                     
                     // 2. Then try Depth hits for precision on objects
                     val depthHit = hits.firstOrNull { hit ->
-                        hit.trackable is com.google.ar.core.DepthPoint
+                        hit.trackable is com.google.ar.core.DepthPoint &&
+                        hit.trackable.trackingState == TrackingState.TRACKING
                     }
 
                     // Use the best available hit, fallback to the original hitResult
                     val bestHit = planeHit ?: depthHit ?: hitResult
-                    val anchor = bestHit.createAnchor()
                     
+                    // IMPROVEMENT: Force gravity-aligned orientation for horizontal surfaces
+                    val pose = bestHit.hitPose
+                    val gravityAlignedPose = if (bestHit.trackable is Plane && 
+                        (bestHit.trackable as Plane).type == Plane.Type.HORIZONTAL_UPWARD_FACING) {
+                        // Keep translation, but reset rotation to be gravity-aligned (Y-up)
+                        Pose.makeTranslation(pose.tx(), pose.ty(), pose.tz())
+                    } else {
+                        pose
+                    }
+
+                    val anchor = bestHit.trackable.createAnchor(gravityAlignedPose)
+                    
+                    android.util.Log.d("ARCoreApp", "New anchor created. Trackable: ${bestHit.trackable::class.java.simpleName}")
+
                     // If we already have a box, move it to the new stable location
                     if (boxNode != null) {
                         sceneView.removeChild(boxNode!!)
@@ -261,13 +277,21 @@ class MainActivity : AppCompatActivity() {
         Matrix.setIdentityM(rotationMatrix, 0)
         Matrix.setIdentityM(scaleMatrix, 0)
         
-        // 1. Get the anchor matrix
+        // 1. Get the anchor matrix - FORCE UPRIGHT if on horizontal plane
         val anchorMatrix = FloatArray(16)
-        anchorPose.toMatrix(anchorMatrix, 0)
+        
+        // Extract translation from anchor pose
+        val tx = anchorPose.tx()
+        val ty = anchorPose.ty()
+        val tz = anchorPose.tz()
+        
+        // Check if the anchor is from a horizontal plane (using our gravity-aligned logic from onTapAr)
+        // Even if not, we force identity rotation (Y-up) for the anchor base to prevent tilt.
+        val uprightPose = Pose.makeTranslation(tx, ty, tz)
+        uprightPose.toMatrix(anchorMatrix, 0)
         
         // 2. Build local transforms
         // Translation in centimeters converted to meters
-        // Apply translation relative to the anchor's coordinate system
         Matrix.translateM(translationMatrix, 0, transX / 100f, transY / 100f, transZ / 100f)
         
         // Create rotation matrix from quaternion
@@ -277,18 +301,13 @@ class MainActivity : AppCompatActivity() {
         // Scale in centimeters converted to meters
         Matrix.scaleM(scaleMatrix, 0, scaleX / 100f, scaleY / 100f, scaleZ / 100f)
         
-        // 3. Combine: World = Anchor * Translation * Rotation * Scale
-        // The order matters: we want to translate first (relative to anchor), 
-        // then rotate at that translated position, then scale.
+        // 3. Combine: World = Anchor(Translation Only) * Translation * Rotation * Scale
         val temp1 = FloatArray(16)
         val temp2 = FloatArray(16)
         
         Matrix.multiplyMM(temp1, 0, anchorMatrix, 0, translationMatrix, 0)
         Matrix.multiplyMM(temp2, 0, temp1, 0, rotationMatrix, 0)
         Matrix.multiplyMM(modelMatrix, 0, temp2, 0, scaleMatrix, 0)
-        
-        // Log the values for debugging translation issues
-        android.util.Log.d("ARCoreApp", "Trans: $transX, $transY, $transZ | Scale: $scaleX, $scaleY, $scaleZ")
         
         return modelMatrix
     }
@@ -338,6 +357,35 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Stop recording first or capture data.", Toast.LENGTH_SHORT).show()
             }
         }
+        binding.btnReset.setOnClickListener {
+            resetTransforms()
+        }
+    }
+
+    private fun resetTransforms() {
+        scaleX = 6.5f
+        scaleY = 12f
+        scaleZ = 6.5f
+        rotX = 0f
+        rotY = 0f
+        rotZ = 0f
+        transX = 0f
+        transY = 6f
+        transZ = 0f
+        
+        // Remove existing box to force a clean re-anchor if desired
+        boxNode?.let {
+            sceneView.removeChild(it)
+            it.destroy()
+        }
+        boxNode = null
+        transformableNode = null
+        
+        // Update all UI labels
+        setupControls() 
+        
+        binding.statusText.text = "Transforms reset. Tap to re-anchor."
+        Toast.makeText(this, "All values reset to defaults", Toast.LENGTH_SHORT).show()
     }
 
     private fun setupRow(rowBinding: com.example.arcoreapp.databinding.LayoutControlRowBinding, label: String, initialValue: Float, step: Float = 0.5f, onUpdate: (Float) -> Unit) {
