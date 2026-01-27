@@ -146,33 +146,45 @@ class MainActivity : AppCompatActivity() {
             }
 
             onTapAr = { _, motionEvent ->
-                lastArFrame?.frame?.let { frame ->
-                    val hits = frame.hitTest(motionEvent.x, motionEvent.y)
+                val arFrame = lastArFrame ?: return@onTapAr
+                val frame = arFrame.frame
+                val hits = frame.hitTest(motionEvent.x, motionEvent.y)
+                
+                // STABILITY PRIORITY:
+                // 1. Refined Horizontal Plane (the ground) - Gold standard for stability
+                // 2. Depth Point (on the object) - Good for precision
+                // 3. Instant Placement (only if refined)
+                
+                val bestHit = hits.firstOrNull { hit ->
+                    val t = hit.trackable
+                    t is Plane && t.trackingState == TrackingState.TRACKING && 
+                    t.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
+                    t.isPoseInPolygon(hit.hitPose)
+                } ?: hits.firstOrNull { hit ->
+                    hit.trackable is com.google.ar.core.DepthPoint && 
+                    hit.trackable.trackingState == TrackingState.TRACKING
+                } ?: hits.firstOrNull { hit ->
+                    hit.trackable.trackingState == TrackingState.TRACKING
+                }
+
+                if (bestHit != null) {
+                    // FORCE GRAVITY ALIGNMENT (Upright Pose)
+                    // Take only (x, y, z) translation. Identity quaternion (0,0,0,1) = upright.
+                    val hitPose = bestHit.hitPose
+                    val uprightPose = Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
                     
-                    // Prioritize the CLOSEST hit that is either a stable Horizontal Plane or a Depth Point.
-                    // ARCore sorts hits by distance, so firstOrNull gives the closest.
-                    val bestHit = hits.firstOrNull { hit ->
-                        val t = hit.trackable
-                        (t is Plane && t.trackingState == TrackingState.TRACKING && t.type == Plane.Type.HORIZONTAL_UPWARD_FACING) ||
-                        (t is com.google.ar.core.DepthPoint && t.trackingState == TrackingState.TRACKING)
-                    } ?: hits.firstOrNull { it.trackable.trackingState == TrackingState.TRACKING }
+                    // Anchoring to the trackable itself is much more stable than just the session
+                    val anchor = bestHit.trackable.createAnchor(uprightPose)
+                    
+                    android.util.Log.d("ARCoreApp", "Anchored to ${bestHit.trackable::class.java.simpleName} at dist ${bestHit.distance}")
 
-                    if (bestHit != null) {
-                        // FORCE GRAVITY ALIGNMENT (Upright Pose)
-                        // This ensures the box stays perpendicular to the ground regardless of the hit surface orientation.
-                        val hitPose = bestHit.hitPose
-                        val uprightPose = Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
-                        
-                        val anchor = bestHit.trackable.createAnchor(uprightPose)
-                        
-                        android.util.Log.d("ARCoreApp", "Stability: Anchored to ${bestHit.trackable::class.java.simpleName} at dist: ${bestHit.distance}")
-
-                        boxNode?.let {
-                            sceneView.removeChild(it)
-                            it.destroy()
-                        }
-                        placeBox(anchor)
+                    boxNode?.let {
+                        sceneView.removeChild(it)
+                        it.destroy()
                     }
+                    placeBox(anchor)
+                } else {
+                    Toast.makeText(this@MainActivity, "Surface not stable yet. Move phone around.", Toast.LENGTH_SHORT).show()
                 }
             }
         }

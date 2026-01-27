@@ -27,20 +27,18 @@ object MathUtils {
         val z = pointCamera[2]
 
         // 2. Camera to Image Plane (using intrinsics)
-        // Note: ARCore camera space is Y-up, X-right, Z-back? 
-        // Actually, ARCore View Matrix transforms from World to Camera.
-        // Standard pinhole: u = fx * (x/z) + cx, v = fy * (y/z) + cy
-        // BUT ARCore camera Z is negative pointing forward in some conventions?
-        // In ARCore, the view matrix transforms to a right-handed coordinate system where 
-        // the camera is at (0,0,0), looking towards -Z.
-        // So we use -z for projection if z is negative.
+        // X+ is Right, Y+ is Up, Z- is Forward (opposite of camera looking dir).
+        // Depth is positive distance from camera
+        val depth = -z 
         
-        val depth = -z // Depth is positive distance from camera
-        
+        // Project to image space (0,0 is center of intrinsics)
         val u = fx * (x / depth) + cx
-        val v = fy * (y / depth) + cy
+        
+        // CRITICAL FIX: In camera space Y is UP, but in screen/image space Y is DOWN.
+        // We must negate the Y term to correctly project from camera to image pixels.
+        val v = cy - fy * (y / depth) 
 
-        // Normalize
+        // Normalize to [0..1]
         val xNorm = u / width
         val yNorm = v / height
 
