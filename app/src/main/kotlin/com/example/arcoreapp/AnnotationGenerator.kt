@@ -96,4 +96,3 @@ object AnnotationGenerator {
         )
     }
 }
-}

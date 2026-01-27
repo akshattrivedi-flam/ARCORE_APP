@@ -456,8 +456,9 @@ class MainActivity : AppCompatActivity() {
         val pointCloud = mutableListOf<List<Float>>()
         try {
             val rawCloud = frame.frame.acquirePointCloud()
-            val buffer = rawCloud.points
-            for (i in 0 until rawCloud.numberOfPoints) {
+            val buffer = rawCloud.points // FloatBuffer [x, y, z, confidence, ...]
+            val count = buffer.remaining() / 4
+            for (i in 0 until count) {
                 pointCloud.add(listOf(buffer.get(i * 4), buffer.get(i * 4 + 1), buffer.get(i * 4 + 2)))
             }
             rawCloud.release()
