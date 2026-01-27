@@ -43,6 +43,8 @@ class MainActivity : AppCompatActivity() {
         private const val CAMERA_PERMISSION_CODE = 100
     }
 
+    private var installRequested = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -51,12 +53,23 @@ class MainActivity : AppCompatActivity() {
         glSurfaceView = binding.glSurfaceView
         captureManager = CaptureManager(this)
 
-        if (checkCameraPermission()) {
-            setupAR()
-        } else {
-            requestCameraPermission()
-        }
+        setupRenderer()
         setupControls()
+    }
+
+    private fun setupRenderer() {
+        renderer = ARRenderer(this)
+        glSurfaceView.preserveEGLContextOnPause = true
+        glSurfaceView.setEGLContextClientVersion(3)
+        glSurfaceView.setRenderer(renderer)
+        glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+
+        glSurfaceView.setOnTouchListener { _, event ->
+            if (event.action == android.view.MotionEvent.ACTION_UP) {
+                renderer.onTouch(event)
+            }
+            true
+        }
     }
 
     private fun checkCameraPermission(): Boolean {
@@ -79,22 +92,28 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupAR() {
-        renderer = ARRenderer(this)
-        glSurfaceView.preserveEGLContextOnPause = true
-        glSurfaceView.setEGLContextClientVersion(3)
-        glSurfaceView.setRenderer(renderer)
-        glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+    private fun setupARSession() {
+        if (arSession != null) return
 
         try {
+            when (ArCoreApk.getInstance().requestInstall(this, !installRequested)) {
+                ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
+                    installRequested = true
+                    return
+                }
+                ArCoreApk.InstallStatus.INSTALLED -> {}
+            }
+
+            if (!checkCameraPermission()) {
+                requestCameraPermission()
+                return
+            }
+
             arSession = Session(this)
             val config = Config(arSession)
-            
-            // Enable Depth for better anchoring
             if (arSession!!.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
                 config.depthMode = Config.DepthMode.AUTOMATIC
             }
-            
             config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
             config.focusMode = Config.FocusMode.AUTO
             config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
@@ -102,16 +121,15 @@ class MainActivity : AppCompatActivity() {
             
             renderer.setArSession(arSession!!)
         } catch (e: Exception) {
-            Toast.makeText(this, "ARCore not supported", Toast.LENGTH_LONG).show()
-            finish()
-        }
-
-        // Handle Taps for Anchor Placement (Delegated to Renderer for Thread-Safety)
-        glSurfaceView.setOnTouchListener { _, event ->
-            if (event.action == android.view.MotionEvent.ACTION_UP) {
-                renderer.onTouch(event)
+            val message = when (e) {
+                is com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException -> "Please install ARCore"
+                is com.google.ar.core.exceptions.UnavailableApkTooOldException -> "Please update ARCore"
+                is com.google.ar.core.exceptions.UnavailableSdkTooOldException -> "Please update this app"
+                is com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException -> "This device does not support AR"
+                else -> "Failed to create AR session: " + e.message
             }
-            true
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            finish()
         }
     }
 
@@ -137,10 +155,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processFrameForRecording(frame: Frame, model: FloatArray, view: FloatArray, mvp: FloatArray) {
+        if (arSession == null) return
         isProcessingFrame = true
         val camera = frame.camera
         
-        // OBJECTRON PERFECT SYNC: Use direct sensor view matrix
+        // OBJECTRON SYNC: In custom OpenGL, use the SAME view matrix as rendering
+        // but for some Objectron scripts, the raw sensor matrix is better.
+        // We calculate both or stick to what matches the IMAGE (the display).
         val sensorViewMatrix = FloatArray(16)
         camera.pose.inverse().toMatrix(sensorViewMatrix, 0)
 
@@ -181,14 +202,26 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        arSession?.resume()
+        setupARSession()
+        try {
+            arSession?.resume()
+        } catch (e: Exception) {
+            arSession = null
+            setupARSession()
+        }
         glSurfaceView.onResume()
     }
 
     override fun onPause() {
         super.onPause()
-        arSession?.pause()
         glSurfaceView.onPause()
+        arSession?.pause()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        arSession?.close()
+        arSession = null
     }
 
     private fun setupControls() {
