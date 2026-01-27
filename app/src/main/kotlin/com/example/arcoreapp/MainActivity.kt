@@ -84,7 +84,7 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == CAMERA_PERMISSION_CODE) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                setupAR()
+                // Do nothing, onResume will handle session setup
             } else {
                 Toast.makeText(this, "Camera permission is required for AR", Toast.LENGTH_LONG).show()
                 finish()
