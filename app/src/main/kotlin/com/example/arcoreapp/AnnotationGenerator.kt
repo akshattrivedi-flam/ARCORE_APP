@@ -28,15 +28,15 @@ data class CameraIntrinsics(
 object AnnotationGenerator {
 
     private val UNIT_CUBE_POINTS = listOf(
-        floatArrayOf(0f, 0f, 0f),       // 0: Center
-        floatArrayOf(-0.5f, -0.5f, 0.5f), // 1: Front-Bottom-Left
-        floatArrayOf(0.5f, -0.5f, 0.5f),  // 2: Front-Bottom-Right
-        floatArrayOf(0.5f, 0.5f, 0.5f),   // 3: Front-Top-Right
-        floatArrayOf(-0.5f, 0.5f, 0.5f),  // 4: Front-Top-Left
-        floatArrayOf(-0.5f, -0.5f, -0.5f),// 5: Back-Bottom-Left
-        floatArrayOf(0.5f, -0.5f, -0.5f), // 6: Back-Bottom-Right
-        floatArrayOf(0.5f, 0.5f, -0.5f),  // 7: Back-Top-Right
-        floatArrayOf(-0.5f, 0.5f, -0.5f)  // 8: Back-Top-Left
+        floatArrayOf(0f, 0.5f, 0f),      // 0: Centroid (Middle of the box)
+        floatArrayOf(-0.5f, 0.0f, 0.5f), // 1: Front-Bottom-Left
+        floatArrayOf(0.5f, 0.0f, 0.5f),  // 2: Front-Bottom-Right
+        floatArrayOf(0.5f, 1.0f, 0.5f),  // 3: Front-Top-Right
+        floatArrayOf(-0.5f, 1.0f, 0.5f), // 4: Front-Top-Left
+        floatArrayOf(-0.5f, 0.0f, -0.5f),// 5: Back-Bottom-Left
+        floatArrayOf(0.5f, 0.0f, -0.5f), // 6: Back-Bottom-Right
+        floatArrayOf(0.5f, 1.0f, -0.5f), // 7: Back-Top-Right
+        floatArrayOf(-0.5f, 1.0f, -0.5f) // 8: Back-Top-Left
     )
 
     fun createEntry(

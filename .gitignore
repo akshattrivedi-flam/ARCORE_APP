@@ -1,0 +1,14 @@
+*.pth
+*.onnx
+*.zip
+seq_*
+results_viz*
+__pycache__/
+bottle_tf_saved_model/
+.gradle/
+build/
+*.apk
+local.properties
+.idea/
+*.iml
+*.log

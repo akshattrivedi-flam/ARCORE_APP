@@ -46,12 +46,12 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     """.trimIndent()
 
     // Transform properties (centimeters) - MARKED VOLATILE FOR THREAD SAFETY
-    @Volatile var mScaleX = 6.5f
-    @Volatile var mScaleY = 12.0f
-    @Volatile var mScaleZ = 6.5f
+    @Volatile var mScaleX = 7.0f
+    @Volatile var mScaleY = 15.0f
+    @Volatile var mScaleZ = 7.0f
     @Volatile var mRotationY = 0.0f
     @Volatile var mTranslationX = 0.0f
-    @Volatile var mTranslationY = 6.0f
+    @Volatile var mTranslationY = 0.0f
     @Volatile var mTranslationZ = 0.0f
 
     @Volatile var currentAnchor: Anchor? = null

@@ -27,12 +27,12 @@ class MainActivity : AppCompatActivity() {
     private var frameCount = 0
 
     // Transform properties (Manual fitting) - values in centimeters
-    private var scaleX = 6.5f
-    private var scaleY = 12f
-    private var scaleZ = 6.5f
+    private var scaleX = 7.0f
+    private var scaleY = 15f
+    private var scaleZ = 7.0f
     private var rotY = 0f
     private var transX = 0f
-    private var transY = 6f
+    private var transY = 0.0f
     private var transZ = 0f
 
     private var isRecording = false
@@ -225,15 +225,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupControls() {
-        setupRow(binding.ctrlScaleX, "Scale X", scaleX, 0.5f) { scaleX = it; renderer.mScaleX = it }
-        setupRow(binding.ctrlScaleY, "Scale Y", scaleY, 0.5f) { scaleY = it; renderer.mScaleY = it }
-        setupRow(binding.ctrlScaleZ, "Scale Z", scaleZ, 0.5f) { scaleZ = it; renderer.mScaleZ = it }
+        // High precision steps: 0.1cm for linear, 1.0 degree for rotation
+        setupRow(binding.ctrlScaleX, "Scale X", scaleX, 0.1f) { scaleX = it; renderer.mScaleX = it }
+        setupRow(binding.ctrlScaleY, "Scale Y", scaleY, 0.1f) { scaleY = it; renderer.mScaleY = it }
+        setupRow(binding.ctrlScaleZ, "Scale Z", scaleZ, 0.1f) { scaleZ = it; renderer.mScaleZ = it }
 
-        setupRow(binding.ctrlRotY, "Rot Y", rotY, 5f) { rotY = it; renderer.mRotationY = it }
+        setupRow(binding.ctrlRotY, "Rot Y", rotY, 1.0f) { rotY = it; renderer.mRotationY = it }
 
-        setupRow(binding.ctrlTransX, "Trans X", transX, 1f) { transX = it; renderer.mTranslationX = it }
-        setupRow(binding.ctrlTransY, "Trans Y", transY, 1f) { transY = it; renderer.mTranslationY = it }
-        setupRow(binding.ctrlTransZ, "Trans Z", transZ, 1f) { transZ = it; renderer.mTranslationZ = it }
+        setupRow(binding.ctrlTransX, "Trans X", transX, 0.1f) { transX = it; renderer.mTranslationX = it }
+        setupRow(binding.ctrlTransY, "Trans Y", transY, 0.1f) { transY = it; renderer.mTranslationY = it }
+        setupRow(binding.ctrlTransZ, "Trans Z", transZ, 0.1f) { transZ = it; renderer.mTranslationZ = it }
 
         binding.btnRecord.setOnClickListener { toggleRecording() }
         binding.btnExport.setOnClickListener {
@@ -253,9 +254,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resetTransforms() {
-        scaleX = 6.5f; scaleY = 12f; scaleZ = 6.5f
+        scaleX = 7.0f; scaleY = 15f; scaleZ = 7.0f
         rotY = 0f
-        transX = 0f; transY = 6f; transZ = 0f
+        transX = 0f; transY = 0.0f; transZ = 0f
         
         renderer.mScaleX = scaleX; renderer.mScaleY = scaleY; renderer.mScaleZ = scaleZ
         renderer.mRotationY = rotY
@@ -271,14 +272,18 @@ class MainActivity : AppCompatActivity() {
         var current = initialValue
         rowBinding.label.text = label
         rowBinding.valueText.text = String.format("%.1f", current)
+        
         rowBinding.btnPlus.setOnClickListener {
             current += step
+            // Clean up float precision issues
+            current = Math.round(current * 100f) / 100f
             rowBinding.valueText.text = String.format("%.1f", current)
             onUpdate(current)
         }
         rowBinding.btnMinus.setOnClickListener {
             current -= step
             if (label.contains("Scale") && current < 0.1f) current = 0.1f
+            current = Math.round(current * 100f) / 100f
             rowBinding.valueText.text = String.format("%.1f", current)
             onUpdate(current)
         }
