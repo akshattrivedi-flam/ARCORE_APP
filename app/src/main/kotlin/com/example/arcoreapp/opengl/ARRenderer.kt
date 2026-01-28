@@ -25,6 +25,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var positionHandle = -1
     private var colorHandle = -1
     private var mvpMatrixHandle = -1
+    private var tintHandle = -1
 
     private val vertexShaderCode = """
         uniform mat4 uMVPMatrix;
@@ -176,11 +177,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
     }
 
-    private var positionHandle = -1
-    private var colorHandle = -1
-    private var mvpMatrixHandle = -1
-    private var tintHandle = -1 
-...
+
     private fun drawBox(mvp: FloatArray) {
         GLES30.glUseProgram(program)
         positionHandle = GLES30.glGetAttribLocation(program, "vPosition")

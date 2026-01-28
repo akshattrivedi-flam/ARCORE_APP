@@ -31,7 +31,7 @@ class CaptureManager(private val context: Context) {
     }
 
     fun saveFrame(bitmap: Bitmap, entry: AnnotationEntry) {
-        if (currentDir == null) startNewSequence()
+        val currentDir = this.currentDir ?: return // Don't save if no sequence started
 
         val imageFile = File(currentDir, entry.image)
         
