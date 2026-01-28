@@ -13,6 +13,7 @@ data class AnnotationEntry(
     @SerializedName("model_matrix") val modelMatrix: List<Float>,
     @SerializedName("mvp_matrix") val mvpMatrix: List<Float>,
     @SerializedName("point_cloud") val pointCloud: List<List<Float>>?,
+    @SerializedName("label") val label: String,
     @SerializedName("timestamp") val timestamp: Long
 )
 
@@ -48,6 +49,7 @@ object AnnotationGenerator {
         points: List<List<Float>>,
         fx: Float, fy: Float, cx: Float, cy: Float,
         width: Int, height: Int,
+        label: String,
         timestamp: Long
     ): AnnotationEntry {
         val keypoints3d = mutableListOf<List<Float>>()
@@ -89,6 +91,7 @@ object AnnotationGenerator {
             modelMatrix = modelMatrix.toList(),
             mvpMatrix = mvpMatrix.toList(),
             pointCloud = pointCloudCam,
+            label = label,
             timestamp = timestamp
         )
     }

@@ -54,11 +54,49 @@
             <include layout="@layout/layout_control_row" android:id="@+id/ctrlTransY" />
             <include layout="@layout/layout_control_row" android:id="@+id/ctrlTransZ" />
 
+            <!-- CATEGORY SELECTION -->
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="TARGET CATEGORY" android:textColor="#FFFF00" android:layout_marginTop="16dp" android:textStyle="bold" android:textSize="14sp" />
+            <RadioGroup
+                android:id="@+id/rgCategory"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="8dp"
+                android:checkedButton="@+id/rbRed">
+                
+                <RadioButton
+                    android:id="@+id/rbRed"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="RED"
+                    android:textColor="#FF6666"
+                    android:buttonTint="#FF0000" />
+                
+                <RadioButton
+                    android:id="@+id/rbBlue"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="BLUE"
+                    android:textColor="#6666FF"
+                    android:buttonTint="#0000FF" />
+                
+                <RadioButton
+                    android:id="@+id/rbSilver"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="SILV"
+                    android:textColor="#CCCCCC"
+                    android:buttonTint="#FFFFFF" />
+            </RadioGroup>
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:layout_marginTop="16dp">
+                android:layout_marginTop="12dp">
 
                 <Button
                     android:id="@+id/btnRecord"

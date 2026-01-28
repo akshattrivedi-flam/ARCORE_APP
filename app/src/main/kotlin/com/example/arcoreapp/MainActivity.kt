@@ -38,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private var isRecording = false
     private var isProcessingFrame = false
     private var lastFrameTime = 0L
+    private var selectedCategory = "red" // Default to red coke
 
     companion object {
         private const val CAMERA_PERMISSION_CODE = 100
@@ -186,6 +187,7 @@ class MainActivity : AppCompatActivity() {
             intrinsics.focalLength[0], intrinsics.focalLength[1],
             intrinsics.principalPoint[0], intrinsics.principalPoint[1],
             intrinsics.imageDimensions[0], intrinsics.imageDimensions[1],
+            selectedCategory,
             System.currentTimeMillis()
         )
 
@@ -251,6 +253,27 @@ class MainActivity : AppCompatActivity() {
         binding.btnReset.setOnClickListener {
             resetTransforms()
         }
+
+        // --- CATEGORY LISTENERS ---
+        binding.rgCategory.setOnCheckedChangeListener { _, checkedId ->
+            when (checkedId) {
+                binding.rbRed.id -> {
+                    selectedCategory = "red"
+                    renderer.updateBoxColor(floatArrayOf(1.0f, 0.4f, 0.4f, 1.0f))
+                    binding.statusText.text = "Mode: RED COKE"
+                }
+                binding.rbBlue.id -> {
+                    selectedCategory = "blue"
+                    renderer.updateBoxColor(floatArrayOf(0.4f, 0.4f, 1.0f, 1.0f))
+                    binding.statusText.text = "Mode: BLUE THUMSUP"
+                }
+                binding.rbSilver.id -> {
+                    selectedCategory = "silver"
+                    renderer.updateBoxColor(floatArrayOf(1.0f, 1.0f, 1.0f, 1.0f))
+                    binding.statusText.text = "Mode: SILVER DIET COKE"
+                }
+            }
+        }
     }
 
     private fun resetTransforms() {
@@ -297,9 +320,9 @@ class MainActivity : AppCompatActivity() {
             }
             isRecording = true
             frameCount = 0
-            captureManager.startNewSequence()
+            captureManager.startNewSequence(selectedCategory)
             binding.btnRecord.text = "STOP RECORDING"
-            binding.fpsText.text = "Status: RECORDING..."
+            binding.fpsText.text = "Status: RECORDING ($selectedCategory)"
         } else {
             isRecording = false
             captureManager.finishSequence()

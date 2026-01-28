@@ -19,10 +19,13 @@ class CaptureManager(private val context: Context) {
     private val ioDispatcher = kotlinx.coroutines.Dispatchers.IO
     private val scope = kotlinx.coroutines.MainScope()
 
-    fun startNewSequence() {
+    fun startNewSequence(category: String) {
         val storageDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+        val categoryFolder = File(storageDir, category)
+        categoryFolder.mkdirs()
+        
         sequenceId = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date()).hashCode().coerceAtLeast(0)
-        currentDir = File(storageDir, "seq_$sequenceId")
+        currentDir = File(categoryFolder, "seq_$sequenceId")
         currentDir?.mkdirs()
         annotations.clear()
     }

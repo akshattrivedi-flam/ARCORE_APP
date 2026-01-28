@@ -33,15 +33,16 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         varying vec4 vColor;
         void main() {
           gl_Position = uMVPMatrix * vPosition;
-          vColor = aColor;
+          vColor = aColor; 
         }
     """.trimIndent()
 
     private val fragmentShaderCode = """
         precision mediump float;
+        uniform vec4 uTint;
         varying vec4 vColor;
         void main() {
-          gl_FragColor = vColor;
+          gl_FragColor = vColor * uTint;
         }
     """.trimIndent()
 
@@ -53,6 +54,13 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile var mTranslationX = 0.0f
     @Volatile var mTranslationY = 0.0f
     @Volatile var mTranslationZ = 0.0f
+
+    // Bounding Box Color [R, G, B, A]
+    @Volatile var mBoxColor = floatArrayOf(1.0f, 0.0f, 0.0f, 0.3f) // Default Red
+
+    fun updateBoxColor(color: FloatArray) {
+        mBoxColor = color
+    }
 
     @Volatile var currentAnchor: Anchor? = null
         private set
@@ -168,11 +176,20 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
     }
 
+    private var positionHandle = -1
+    private var colorHandle = -1
+    private var mvpMatrixHandle = -1
+    private var tintHandle = -1 
+...
     private fun drawBox(mvp: FloatArray) {
         GLES30.glUseProgram(program)
         positionHandle = GLES30.glGetAttribLocation(program, "vPosition")
         colorHandle = GLES30.glGetAttribLocation(program, "aColor")
         mvpMatrixHandle = GLES30.glGetUniformLocation(program, "uMVPMatrix")
+        tintHandle = GLES30.glGetUniformLocation(program, "uTint")
+
+        // Set Tint
+        GLES30.glUniform4fv(tintHandle, 1, mBoxColor, 0)
 
         customBox?.draw(positionHandle, colorHandle, mvpMatrixHandle, mvp)
     }
