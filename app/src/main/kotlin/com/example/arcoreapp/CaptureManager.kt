@@ -10,6 +10,10 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
+import com.google.ar.core.RecordingConfig
+import com.google.ar.core.Session
+import android.net.Uri
+
 class CaptureManager(private val context: Context) {
 
     private val gson = GsonBuilder().setPrettyPrinting().create()
@@ -21,7 +25,7 @@ class CaptureManager(private val context: Context) {
     
     private val prefs = context.getSharedPreferences("objectron_prefs", Context.MODE_PRIVATE)
 
-    fun startNewSequence(category: String) {
+    fun startNewSequence(category: String, session: Session? = null) {
         val storageDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
         val categoryFolder = File(storageDir, category)
         categoryFolder.mkdirs()
@@ -34,18 +38,30 @@ class CaptureManager(private val context: Context) {
         currentDir = File(categoryFolder, "video_${indexStr}_$category")
         currentDir?.mkdirs()
         annotations.clear()
+
+        // Start ARCore Session Recording (Raw Feed)
+        session?.let {
+            val videoFile = File(currentDir, "video_raw.mp4")
+            try {
+                val recordingConfig = RecordingConfig(it)
+                    .setMp4DatasetUri(Uri.fromFile(videoFile))
+                    .setAutoStopOnPause(true)
+                it.startRecording(recordingConfig)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     fun saveFrame(bitmap: Bitmap, entry: AnnotationEntry) {
-        val currentDir = this.currentDir ?: return // Don't save if no sequence started
+        val currentDir = this.currentDir ?: return
 
         val imageFile = File(currentDir, entry.image)
         
-        // Save image on background thread
         scope.launch(ioDispatcher) {
             try {
                 FileOutputStream(imageFile).use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out) // High quality
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -57,7 +73,16 @@ class CaptureManager(private val context: Context) {
         }
     }
 
-    fun finishSequence(category: String) {
+    fun finishSequence(category: String, session: Session? = null) {
+        // Stop ARCore Recording
+        session?.let {
+            try {
+                it.stopRecording()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        
         saveAnnotationsLocal()
         incrementCount(category)
     }

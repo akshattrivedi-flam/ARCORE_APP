@@ -336,12 +336,12 @@ class MainActivity : AppCompatActivity() {
             }
             isRecording = true
             frameCount = 0
-            captureManager.startNewSequence(selectedCategory)
+            captureManager.startNewSequence(selectedCategory, arSession)
             binding.btnRecord.text = "STOP RECORDING"
             binding.fpsText.text = "Status: RECORDING ($selectedCategory)"
         } else {
             isRecording = false
-            captureManager.finishSequence(selectedCategory)
+            captureManager.finishSequence(selectedCategory, arSession)
             updateProgressUI()
             binding.btnRecord.text = "START RECORDING"
             binding.fpsText.text = "Status: IDLE (Saved ${frameCount} frames)"
