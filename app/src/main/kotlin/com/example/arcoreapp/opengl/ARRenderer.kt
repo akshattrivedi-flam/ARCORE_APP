@@ -54,7 +54,8 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile var mRotationY = 0.0f
     @Volatile var mTranslationX = 0.0f
     @Volatile var mTranslationY = 0.0f
-    @Volatile var mTranslationZ = 0.0f
+    @Volatile var mTranslationZ = 0.0f // This will now act as our "Depth" control
+    @Volatile var mManualDepth = 50.0f // Initial placement distance in cm
 
     // Bounding Box Color [R, G, B, A]
     @Volatile var mBoxColor = floatArrayOf(1.0f, 0.0f, 0.0f, 0.3f) // Default Red
@@ -70,6 +71,30 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     fun resetAnchor() {
         currentAnchor?.detach()
         currentAnchor = null
+    }
+
+    fun placeInAir() {
+        val session = this.session ?: return
+        try {
+            // Get the current camera pose
+            val frame = session.update()
+            val cameraPose = frame.camera.pose
+            
+            // Create a translation 50cm (or mManualDepth) forward (-Z in ARCore camera space)
+            // We use 0,0,-0.5m as a starting point
+            val distanceInMeters = mManualDepth / 100f
+            val relativePose = com.google.ar.core.Pose.makeTranslation(0f, 0f, -distanceInMeters)
+            val airPose = cameraPose.compose(relativePose)
+            
+            resetAnchor()
+            synchronized(this) {
+                currentAnchor = session.createAnchor(airPose)
+            }
+            
+            (context as MainActivity).runOnUiThread {
+                context.onAnchorPlaced()
+            }
+        } catch (e: Exception) {}
     }
 
     private val queuedTaps = java.util.concurrent.ArrayBlockingQueue<android.view.MotionEvent>(16)

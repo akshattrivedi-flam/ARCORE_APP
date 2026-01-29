@@ -237,9 +237,13 @@ class MainActivity : AppCompatActivity() {
 
         setupRow(binding.ctrlTransX, "Trans X", transX, 0.1f) { transX = it; renderer.mTranslationX = it }
         setupRow(binding.ctrlTransY, "Trans Y", transY, 0.1f) { transY = it; renderer.mTranslationY = it }
-        setupRow(binding.ctrlTransZ, "Trans Z", transZ, 0.1f) { transZ = it; renderer.mTranslationZ = it }
+        setupRow(binding.ctrlTransZ, "Depth / Z", transZ, 0.1f) { transZ = it; renderer.mTranslationZ = it }
 
         binding.btnRecord.setOnClickListener { toggleRecording() }
+        binding.btnAir.setOnClickListener { 
+            renderer.placeInAir()
+            binding.statusText.text = "Placed in air. Adjust fit manually."
+        }
         binding.btnExport.setOnClickListener {
             val capturePath = captureManager.getCapturePath()
             val directory = File(capturePath)
