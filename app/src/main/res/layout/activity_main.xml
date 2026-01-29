@@ -92,6 +92,41 @@
                     android:buttonTint="#FFFFFF" />
             </RadioGroup>
 
+            <!-- PROGRESS INDICATORS -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="4dp">
+                <TextView
+                    android:id="@+id/tvProgressRed"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Red: 0/25"
+                    android:textColor="#FFBBBB"
+                    android:textSize="11sp"
+                    android:gravity="center" />
+                <TextView
+                    android:id="@+id/tvProgressBlue"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Blue: 0/10"
+                    android:textColor="#BBBBFF"
+                    android:textSize="11sp"
+                    android:gravity="center" />
+                <TextView
+                    android:id="@+id/tvProgressSilver"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Silver: 0/10"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp"
+                    android:gravity="center" />
+            </LinearLayout>
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

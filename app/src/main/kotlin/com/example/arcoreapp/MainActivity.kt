@@ -54,6 +54,7 @@ class MainActivity : AppCompatActivity() {
         glSurfaceView = binding.glSurfaceView
         captureManager = CaptureManager(this)
 
+        updateProgressUI()
         setupRenderer()
         setupControls()
     }
@@ -276,6 +277,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateProgressUI() {
+        val red = captureManager.getCount("red")
+        val blue = captureManager.getCount("blue")
+        val silver = captureManager.getCount("silver")
+
+        binding.tvProgressRed.text = "Red: $red/25"
+        binding.tvProgressBlue.text = "Blue: $blue/10"
+        binding.tvProgressSilver.text = "Silver: $silver/10"
+
+        // Highlight completion in green
+        if (red >= 25) binding.tvProgressRed.setTextColor(0xFF00FF00.toInt())
+        if (blue >= 10) binding.tvProgressBlue.setTextColor(0xFF00FF00.toInt())
+        if (silver >= 10) binding.tvProgressSilver.setTextColor(0xFF00FF00.toInt())
+    }
+
     private fun resetTransforms() {
         scaleX = 7.0f; scaleY = 15f; scaleZ = 7.0f
         rotY = 0f
@@ -325,7 +341,8 @@ class MainActivity : AppCompatActivity() {
             binding.fpsText.text = "Status: RECORDING ($selectedCategory)"
         } else {
             isRecording = false
-            captureManager.finishSequence()
+            captureManager.finishSequence(selectedCategory)
+            updateProgressUI()
             binding.btnRecord.text = "START RECORDING"
             binding.fpsText.text = "Status: IDLE (Saved ${frameCount} frames)"
         }

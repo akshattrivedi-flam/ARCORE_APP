@@ -18,14 +18,20 @@ class CaptureManager(private val context: Context) {
     private val annotations = mutableListOf<AnnotationEntry>()
     private val ioDispatcher = kotlinx.coroutines.Dispatchers.IO
     private val scope = kotlinx.coroutines.MainScope()
+    
+    private val prefs = context.getSharedPreferences("objectron_prefs", Context.MODE_PRIVATE)
 
     fun startNewSequence(category: String) {
         val storageDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
         val categoryFolder = File(storageDir, category)
         categoryFolder.mkdirs()
         
-        sequenceId = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date()).hashCode().coerceAtLeast(0)
-        currentDir = File(categoryFolder, "seq_$sequenceId")
+        // Get index (next number)
+        val count = getCount(category) + 1
+        val indexStr = String.format("%02d", count)
+        
+        // Format: video_01_red
+        currentDir = File(categoryFolder, "video_${indexStr}_$category")
         currentDir?.mkdirs()
         annotations.clear()
     }
@@ -39,12 +45,10 @@ class CaptureManager(private val context: Context) {
         scope.launch(ioDispatcher) {
             try {
                 FileOutputStream(imageFile).use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out) // High quality
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-            } finally {
-                // Reuse bitmap if possible or let GC handle it
             }
         }
         
@@ -53,8 +57,18 @@ class CaptureManager(private val context: Context) {
         }
     }
 
-    fun finishSequence() {
+    fun finishSequence(category: String) {
         saveAnnotationsLocal()
+        incrementCount(category)
+    }
+
+    private fun incrementCount(category: String) {
+        val current = getCount(category)
+        prefs.edit().putInt("count_$category", current + 1).apply()
+    }
+
+    fun getCount(category: String): Int {
+        return prefs.getInt("count_$category", 0)
     }
 
     private fun saveAnnotationsLocal() {
