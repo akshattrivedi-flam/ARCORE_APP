@@ -14,6 +14,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     private var backgroundRenderer = BackgroundRenderer()
     private var customBox: CustomBoundingBox? = null
+    private var customCylinder: CustomCylinder? = null
     private var program = -1
     private var session: Session? = null
     
@@ -58,6 +59,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile var mManualDepth = 50.0f // Initial placement distance in cm
     @Volatile var isCameraLocked = false // Handheld stability mode
     @Volatile var isAutoDepthEnabled = false // Continuous depth tracking
+    @Volatile var isCylinderMode = false // Toggle between Box and Cylinder
 
     // Bounding Box Color [R, G, B, A]
     @Volatile var mBoxColor = floatArrayOf(1.0f, 0.0f, 0.0f, 0.3f) // Default Red
@@ -118,6 +120,15 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         this.session = session
     }
 
+    fun snapToImage(image: com.google.ar.core.AugmentedImage) {
+        val session = this.session ?: return
+        // Create an anchor at the center of the image
+        resetAnchor()
+        synchronized(this) {
+            currentAnchor = image.createAnchor(image.centerPose)
+        }
+    }
+
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES30.glClearColor(0.1f, 0.1f, 0.1f, 1.0f)
         GLES30.glEnable(GLES30.GL_BLEND)
@@ -126,6 +137,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         backgroundRenderer.createOnGlThread()
         customBox = CustomBoundingBox()
+        customCylinder = CustomCylinder(50)
 
         val vertexShader = loadShader(GLES30.GL_VERTEX_SHADER, vertexShaderCode)
         val fragmentShader = loadShader(GLES30.GL_FRAGMENT_SHADER, fragmentShaderCode)
@@ -259,7 +271,11 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         // Set Tint
         GLES30.glUniform4fv(tintHandle, 1, mBoxColor, 0)
 
-        customBox?.draw(positionHandle, colorHandle, mvpMatrixHandle, mvpMatrix)
+        if (isCylinderMode) {
+            customCylinder?.draw(positionHandle, mvpMatrixHandle, mvpMatrix)
+        } else {
+            customBox?.draw(positionHandle, colorHandle, mvpMatrixHandle, mvpMatrix)
+        }
     }
 
     private fun loadShader(type: Int, shaderCode: String): Int {

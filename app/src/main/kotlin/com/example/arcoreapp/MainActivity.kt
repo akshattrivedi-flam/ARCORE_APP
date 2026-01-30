@@ -119,6 +119,19 @@ class MainActivity : AppCompatActivity() {
             config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
             config.focusMode = Config.FocusMode.AUTO
             config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+            
+            // --- AUGMENTED IMAGES (Marker-Based Snap) ---
+            val imageDatabase = AugmentedImageDatabase(arSession)
+            try {
+                val inputStream = assets.open("markers/coke_marker.png")
+                val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                // We assume the marker is 10cm wide physically on the can
+                imageDatabase.addImage("coke_marker", bitmap, 0.10f)
+            } catch (e: Exception) {
+                Toast.makeText(this, "Failed to load marker: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+            config.augmentedImageDatabase = imageDatabase
+            
             arSession!!.configure(config)
             
             renderer.setArSession(arSession!!)
@@ -148,10 +161,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
         
+        // AUTO-SNAP to Augmented Image (Option B)
+        frame.getUpdatedTrackables(AugmentedImage::class.java).forEach { image ->
+            if (image.trackingState == TrackingState.TRACKING && image.name == "coke_marker") {
+                renderer.snapToImage(image)
+                runOnUiThread {
+                    binding.statusText.text = "Marker Detected: Auto-Snapped Box!"
+                }
+            }
+        }
+
         // Update UI status
         runOnUiThread {
             if (renderer.currentAnchor == null) {
-                binding.statusText.text = "Scanning for surfaces... Tap to place."
+                binding.statusText.text = "Scanning... Place marker or tap surface."
             }
         }
     }
@@ -252,6 +275,15 @@ class MainActivity : AppCompatActivity() {
             renderer.isAutoDepthEnabled = isChecked
             if (isChecked) {
                 binding.statusText.text = "Auto-Depth Sync Active"
+            }
+        }
+
+        binding.swCylinderMode.setOnCheckedChangeListener { _, isChecked ->
+            renderer.isCylinderMode = isChecked
+            if (isChecked) {
+                binding.statusText.text = "Visualizing as Cylinder (Wireframe)"
+            } else {
+                binding.statusText.text = "Visualizing as Box (Objectron)"
             }
         }
 

@@ -184,6 +184,20 @@
                     android:textColor="#FFFFFF" />
              </LinearLayout>
 
+             <LinearLayout 
+                 android:layout_width="match_parent" 
+                 android:layout_height="wrap_content" 
+                 android:orientation="horizontal"
+                 android:layout_marginTop="4dp">
+                 
+                 <Switch
+                    android:id="@+id/swCylinderMode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Visualization: Cylinder (Wireframe)"
+                    android:textColor="#BBBBFF" />
+             </LinearLayout>
+
             <Button
                 android:id="@+id/btnAir"
                 android:layout_width="match_parent"
