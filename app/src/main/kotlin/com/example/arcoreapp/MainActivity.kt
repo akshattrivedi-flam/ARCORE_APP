@@ -239,10 +239,26 @@ class MainActivity : AppCompatActivity() {
         setupRow(binding.ctrlTransY, "Trans Y", transY, 0.1f) { transY = it; renderer.mTranslationY = it }
         setupRow(binding.ctrlTransZ, "Depth / Z", transZ, 0.1f) { transZ = it; renderer.mTranslationZ = it }
 
+        binding.swCamLock.setOnCheckedChangeListener { _, isChecked ->
+            renderer.isCameraLocked = isChecked
+            if (isChecked) {
+                binding.statusText.text = "Locked to Camera! (Zero Drift Mode)"
+            } else {
+                binding.statusText.text = "Switched to World Anchor mode."
+            }
+        }
+
+        binding.swAutoDepth.setOnCheckedChangeListener { _, isChecked ->
+            renderer.isAutoDepthEnabled = isChecked
+            if (isChecked) {
+                binding.statusText.text = "Auto-Depth Sync Active"
+            }
+        }
+
         binding.btnRecord.setOnClickListener { toggleRecording() }
         binding.btnAir.setOnClickListener { 
-            renderer.placeInAir()
-            binding.statusText.text = "Placed in air. Adjust fit manually."
+            renderer.placeInAir(useDepth = true)
+            binding.statusText.text = "Snapped to Depth. Adjust fit manually."
         }
         binding.btnExport.setOnClickListener {
             val capturePath = captureManager.getCapturePath()

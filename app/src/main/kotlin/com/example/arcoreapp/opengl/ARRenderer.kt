@@ -56,6 +56,8 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile var mTranslationY = 0.0f
     @Volatile var mTranslationZ = 0.0f // This will now act as our "Depth" control
     @Volatile var mManualDepth = 50.0f // Initial placement distance in cm
+    @Volatile var isCameraLocked = false // Handheld stability mode
+    @Volatile var isAutoDepthEnabled = false // Continuous depth tracking
 
     // Bounding Box Color [R, G, B, A]
     @Volatile var mBoxColor = floatArrayOf(1.0f, 0.0f, 0.0f, 0.3f) // Default Red
@@ -73,16 +75,25 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         currentAnchor = null
     }
 
-    fun placeInAir() {
+    fun placeInAir(useDepth: Boolean = true) {
         val session = this.session ?: return
         try {
-            // Get the current camera pose
             val frame = session.update()
             val cameraPose = frame.camera.pose
             
-            // Create a translation 50cm (or mManualDepth) forward (-Z in ARCore camera space)
-            // We use 0,0,-0.5m as a starting point
-            val distanceInMeters = mManualDepth / 100f
+            var distanceInMeters = mManualDepth / 100f
+            
+            if (useDepth) {
+                // Better Depth API usage: Sample center of screen
+                val hits = frame.hitTest(frame.camera.imageIntrinsics.imageDimensions[0] / 2f, 
+                                        frame.camera.imageIntrinsics.imageDimensions[1] / 2f)
+                val depthHit = hits.firstOrNull { it.trackable is com.google.ar.core.DepthPoint }
+                if (depthHit != null) {
+                    distanceInMeters = depthHit.hitPose.tz().let { Math.abs(it) } 
+                    mManualDepth = distanceInMeters * 100f
+                }
+            }
+
             val relativePose = com.google.ar.core.Pose.makeTranslation(0f, 0f, -distanceInMeters)
             val airPose = cameraPose.compose(relativePose)
             
@@ -142,26 +153,59 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
             val camera = frame.camera
 
             backgroundRenderer.draw(frame)
+            
+            // Continuous Depth Sync logic
+            if (isAutoDepthEnabled) {
+                try {
+                    val hits = frame.hitTest(frame.camera.imageIntrinsics.imageDimensions[0] / 2f, 
+                                            frame.camera.imageIntrinsics.imageDimensions[1] / 2f)
+                    val depthHit = hits.firstOrNull { it.trackable is com.google.ar.core.DepthPoint }
+                    if (depthHit != null) {
+                        val distanceInMeters = depthHit.hitPose.tz().let { Math.abs(it) }
+                        mManualDepth = distanceInMeters * 100f
+                    }
+                } catch (e: Exception) {}
+            }
+
             handleTaps(frame, camera)
 
             if (camera.trackingState == com.google.ar.core.TrackingState.TRACKING) {
-                val anchor = currentAnchor
-                if (anchor != null && anchor.trackingState == com.google.ar.core.TrackingState.TRACKING) {
-                    camera.getProjectionMatrix(projectionMatrix, 0, 0.1f, 100.0f)
-                    camera.getViewMatrix(viewMatrix, 0)
-                    
-                    anchor.pose.toMatrix(anchorMatrix, 0)
-                    
-                    // Apply manual transforms (converted to meters)
-                    Matrix.translateM(anchorMatrix, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
-                    Matrix.rotateM(anchorMatrix, 0, mRotationY, 0f, 1f, 0f)
-                    Matrix.scaleM(anchorMatrix, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
+                camera.getProjectionMatrix(projectionMatrix, 0, 0.1f, 100.0f)
+                camera.getViewMatrix(viewMatrix, 0)
 
-                    val tempMatrix = FloatArray(16)
-                    Matrix.multiplyMM(tempMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
-                    Matrix.multiplyMM(mvpMatrix, 0, projectionMatrix, 0, tempMatrix, 0)
+                if (isCameraLocked) {
+                    // --- CAMERA LOCKED MODE (Enhanced stability for Handheld) ---
+                    // Compute model matrix in Camera space first
+                    val localModel = FloatArray(16)
+                    Matrix.setIdentityM(localModel, 0)
+                    val totalZMeter = -(mManualDepth + mTranslationZ) / 100f
+                    Matrix.translateM(localModel, 0, mTranslationX / 100f, mTranslationY / 100f, totalZMeter)
+                    Matrix.rotateM(localModel, 0, mRotationY, 0f, 1f, 0f)
+                    Matrix.scaleM(localModel, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
 
-                    drawBox(mvpMatrix)
+                    // Convert to World space so that shared logic (annotations, etc) works correctly
+                    val cameraPoseMatrix = FloatArray(16)
+                    camera.pose.toMatrix(cameraPoseMatrix, 0)
+                    Matrix.multiplyMM(anchorMatrix, 0, cameraPoseMatrix, 0, localModel, 0)
+
+                    // Standard draw call using the newly computed World-Model matrix
+                    val viewModelMatrix = FloatArray(16)
+                    Matrix.multiplyMM(viewModelMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
+                    drawBox(projectionMatrix, viewModelMatrix)
+                } else {
+                    // --- WORLD ANCHOR MODE ---
+                    val anchor = currentAnchor
+                    if (anchor != null && anchor.trackingState == com.google.ar.core.TrackingState.TRACKING) {
+                        anchor.pose.toMatrix(anchorMatrix, 0)
+                        
+                        Matrix.translateM(anchorMatrix, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
+                        Matrix.rotateM(anchorMatrix, 0, mRotationY, 0f, 1f, 0f)
+                        Matrix.scaleM(anchorMatrix, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
+
+                        val viewModelMatrix = FloatArray(16)
+                        Matrix.multiplyMM(viewModelMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
+                        drawBox(projectionMatrix, viewModelMatrix)
+                    }
                 }
             }
             
@@ -203,7 +247,9 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
 
-    private fun drawBox(mvp: FloatArray) {
+    private fun drawBox(proj: FloatArray, viewModel: FloatArray) {
+        Matrix.multiplyMM(mvpMatrix, 0, proj, 0, viewModel, 0)
+        
         GLES30.glUseProgram(program)
         positionHandle = GLES30.glGetAttribLocation(program, "vPosition")
         colorHandle = GLES30.glGetAttribLocation(program, "aColor")
@@ -213,7 +259,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         // Set Tint
         GLES30.glUniform4fv(tintHandle, 1, mBoxColor, 0)
 
-        customBox?.draw(positionHandle, colorHandle, mvpMatrixHandle, mvp)
+        customBox?.draw(positionHandle, colorHandle, mvpMatrixHandle, mvpMatrix)
     }
 
     private fun loadShader(type: Int, shaderCode: String): Int {

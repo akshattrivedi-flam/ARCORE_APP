@@ -159,12 +159,37 @@
                     android:layout_marginStart="8dp" />
             </LinearLayout>
 
+            <!-- STABILITY CONTROLS -->
+             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="HANDHELD STABILITY" android:textColor="#00FFFF" android:layout_marginTop="16dp" android:textStyle="bold" />
+             
+             <LinearLayout 
+                 android:layout_width="match_parent" 
+                 android:layout_height="wrap_content" 
+                 android:orientation="horizontal">
+                 
+                 <Switch
+                    android:id="@+id/swCamLock"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Lock to Cam"
+                    android:textColor="#FFFFFF" />
+                    
+                <Switch
+                    android:id="@+id/swAutoDepth"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Auto Depth"
+                    android:textColor="#FFFFFF" />
+             </LinearLayout>
+
             <Button
                 android:id="@+id/btnAir"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="PLACE IN AIR (HANDHELD MODE)"
+                android:text="SNAP TO DEPTH"
                 android:backgroundTint="#2196F3" />
 
             <TextView
