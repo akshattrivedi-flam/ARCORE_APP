@@ -30,7 +30,9 @@ class MainActivity : AppCompatActivity() {
     private var scaleX = 7.0f
     private var scaleY = 15f
     private var scaleZ = 7.0f
+    private var rotX = 0f
     private var rotY = 0f
+    private var rotZ = 0f
     private var transX = 0f
     private var transY = 0.0f
     private var transZ = 0f
@@ -256,7 +258,9 @@ class MainActivity : AppCompatActivity() {
         setupRow(binding.ctrlScaleY, "Scale Y", scaleY, 0.1f) { scaleY = it; renderer.mScaleY = it }
         setupRow(binding.ctrlScaleZ, "Scale Z", scaleZ, 0.1f) { scaleZ = it; renderer.mScaleZ = it }
 
+        setupRow(binding.ctrlRotX, "Rot X", rotX, 1.0f) { rotX = it; renderer.mRotationX = it }
         setupRow(binding.ctrlRotY, "Rot Y", rotY, 1.0f) { rotY = it; renderer.mRotationY = it }
+        setupRow(binding.ctrlRotZ, "Rot Z", rotZ, 1.0f) { rotZ = it; renderer.mRotationZ = it }
 
         setupRow(binding.ctrlTransX, "Trans X", transX, 0.1f) { transX = it; renderer.mTranslationX = it }
         setupRow(binding.ctrlTransY, "Trans Y", transY, 0.1f) { transY = it; renderer.mTranslationY = it }
@@ -346,11 +350,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun resetTransforms() {
         scaleX = 7.0f; scaleY = 15f; scaleZ = 7.0f
-        rotY = 0f
+        rotX = 0f; rotY = 0f; rotZ = 0f
         transX = 0f; transY = 0.0f; transZ = 0f
         
         renderer.mScaleX = scaleX; renderer.mScaleY = scaleY; renderer.mScaleZ = scaleZ
-        renderer.mRotationY = rotY
+        renderer.mRotationX = rotX; renderer.mRotationY = rotY; renderer.mRotationZ = rotZ
         renderer.mTranslationX = transX; renderer.mTranslationY = transY; renderer.mTranslationZ = transZ
         
         renderer.resetAnchor()

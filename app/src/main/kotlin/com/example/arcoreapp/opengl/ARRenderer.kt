@@ -52,7 +52,9 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile var mScaleX = 7.0f
     @Volatile var mScaleY = 15.0f
     @Volatile var mScaleZ = 7.0f
+    @Volatile var mRotationX = 0.0f
     @Volatile var mRotationY = 0.0f
+    @Volatile var mRotationZ = 0.0f
     @Volatile var mTranslationX = 0.0f
     @Volatile var mTranslationY = 0.0f
     @Volatile var mTranslationZ = 0.0f // This will now act as our "Depth" control
@@ -192,7 +194,9 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
                     Matrix.setIdentityM(localModel, 0)
                     val totalZMeter = -(mManualDepth + mTranslationZ) / 100f
                     Matrix.translateM(localModel, 0, mTranslationX / 100f, mTranslationY / 100f, totalZMeter)
+                    Matrix.rotateM(localModel, 0, mRotationX, 1f, 0f, 0f)
                     Matrix.rotateM(localModel, 0, mRotationY, 0f, 1f, 0f)
+                    Matrix.rotateM(localModel, 0, mRotationZ, 0f, 0f, 1f)
                     Matrix.scaleM(localModel, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
 
                     // Convert to World space so that shared logic (annotations, etc) works correctly
@@ -211,7 +215,9 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
                         anchor.pose.toMatrix(anchorMatrix, 0)
                         
                         Matrix.translateM(anchorMatrix, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
+                        Matrix.rotateM(anchorMatrix, 0, mRotationX, 1f, 0f, 0f)
                         Matrix.rotateM(anchorMatrix, 0, mRotationY, 0f, 1f, 0f)
+                        Matrix.rotateM(anchorMatrix, 0, mRotationZ, 0f, 0f, 1f)
                         Matrix.scaleM(anchorMatrix, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
 
                         val viewModelMatrix = FloatArray(16)
@@ -244,12 +250,12 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         if (bestHit != null) {
             val hitPose = bestHit.hitPose
-            val uprightPose = com.google.ar.core.Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
+            // NO LONGER FORCING UPRIGHT. Use hitPose orientation directly for 6-DoF stability.
             
             // GL Thread safe update
             resetAnchor()
             synchronized(this) {
-                currentAnchor = bestHit.trackable.createAnchor(uprightPose)
+                currentAnchor = bestHit.trackable.createAnchor(hitPose)
             }
             
             (context as MainActivity).runOnUiThread {
