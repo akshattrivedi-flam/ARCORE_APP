@@ -188,37 +188,52 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 camera.getViewMatrix(viewMatrix, 0)
 
                 if (isCameraLocked) {
-                    // --- CAMERA LOCKED MODE (Enhanced stability for Handheld) ---
-                    // Compute model matrix in Camera space first
-                    val localModel = FloatArray(16)
-                    Matrix.setIdentityM(localModel, 0)
-                    val totalZMeter = -(mManualDepth + mTranslationZ) / 100f
-                    Matrix.translateM(localModel, 0, mTranslationX / 100f, mTranslationY / 100f, totalZMeter)
-                    Matrix.rotateM(localModel, 0, mRotationX, 1f, 0f, 0f)
-                    Matrix.rotateM(localModel, 0, mRotationY, 0f, 1f, 0f)
-                    Matrix.rotateM(localModel, 0, mRotationZ, 0f, 0f, 1f)
-                    Matrix.scaleM(localModel, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
-
-                    // Convert to World space so that shared logic (annotations, etc) works correctly
+                    // --- THE ZERO-DRIFT H.U.D. PIVOT ---
+                    // 1. Start with the current Camera Pose as our Base
                     val cameraPoseMatrix = FloatArray(16)
                     camera.pose.toMatrix(cameraPoseMatrix, 0)
-                    Matrix.multiplyMM(anchorMatrix, 0, cameraPoseMatrix, 0, localModel, 0)
+                    
+                    // 2. Create the User Offset Matrix (Translation -> Rotation -> Scale)
+                    val userOffset = FloatArray(16)
+                    Matrix.setIdentityM(userOffset, 0)
+                    
+                    // Move the box to the distance (Z) and user offset (X, Y)
+                    val totalZMeter = -(mManualDepth + mTranslationZ) / 100f
+                    Matrix.translateM(userOffset, 0, mTranslationX / 100f, mTranslationY / 100f, totalZMeter)
+                    
+                    // CRITICAL: Rotate the box around its OWN center in Camera Space
+                    Matrix.rotateM(userOffset, 0, mRotationX, 1f, 0f, 0f)
+                    Matrix.rotateM(userOffset, 0, mRotationY, 0f, 1f, 0f)
+                    Matrix.rotateM(userOffset, 0, mRotationZ, 0f, 0f, 1f)
+                    
+                    // Final Scale
+                    Matrix.scaleM(userOffset, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
 
-                    // Standard draw call using the newly computed World-Model matrix
+                    // 3. PARENTING: anchorMatrix = CameraPose * UserOffset
+                    // This creates a rock-solid 'glued' effect to the screen
+                    Matrix.multiplyMM(anchorMatrix, 0, cameraPoseMatrix, 0, userOffset, 0)
+
+                    // 4. DRAW: Using the actual projection and view matrices
                     val viewModelMatrix = FloatArray(16)
                     Matrix.multiplyMM(viewModelMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
                     drawBox(projectionMatrix, viewModelMatrix)
                 } else {
-                    // --- WORLD ANCHOR MODE ---
+                    // --- WORLD ANCHOR MODE (Surface Tracking) ---
                     val anchor = currentAnchor
                     if (anchor != null && anchor.trackingState == com.google.ar.core.TrackingState.TRACKING) {
-                        anchor.pose.toMatrix(anchorMatrix, 0)
+                        val baseAnchorMatrix = FloatArray(16)
+                        anchor.pose.toMatrix(baseAnchorMatrix, 0)
                         
-                        Matrix.translateM(anchorMatrix, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
-                        Matrix.rotateM(anchorMatrix, 0, mRotationX, 1f, 0f, 0f)
-                        Matrix.rotateM(anchorMatrix, 0, mRotationY, 0f, 1f, 0f)
-                        Matrix.rotateM(anchorMatrix, 0, mRotationZ, 0f, 0f, 1f)
-                        Matrix.scaleM(anchorMatrix, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
+                        // Apply User Offsets RELATIVE to the Anchor's Pivot
+                        val userOffset = FloatArray(16)
+                        Matrix.setIdentityM(userOffset, 0)
+                        Matrix.translateM(userOffset, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
+                        Matrix.rotateM(userOffset, 0, mRotationX, 1f, 0f, 0f)
+                        Matrix.rotateM(userOffset, 0, mRotationY, 0f, 1f, 0f)
+                        Matrix.rotateM(userOffset, 0, mRotationZ, 0f, 0f, 1f)
+                        Matrix.scaleM(userOffset, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
+
+                        Matrix.multiplyMM(anchorMatrix, 0, baseAnchorMatrix, 0, userOffset, 0)
 
                         val viewModelMatrix = FloatArray(16)
                         Matrix.multiplyMM(viewModelMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
