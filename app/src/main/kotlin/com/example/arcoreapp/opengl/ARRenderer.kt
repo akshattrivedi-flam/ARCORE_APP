@@ -218,23 +218,20 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
                     Matrix.multiplyMM(viewModelMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
                     drawBox(projectionMatrix, viewModelMatrix)
                 } else {
-                    // --- WORLD ANCHOR MODE (Surface Tracking) ---
+                    // --- WORLD ANCHOR MODE (Standard ARCore Surface Tracking) ---
                     val anchor = currentAnchor
                     if (anchor != null && anchor.trackingState == com.google.ar.core.TrackingState.TRACKING) {
-                        val baseAnchorMatrix = FloatArray(16)
-                        anchor.pose.toMatrix(baseAnchorMatrix, 0)
+                        // 1. Get the raw anchor pose
+                        anchor.pose.toMatrix(anchorMatrix, 0)
                         
-                        // Apply User Offsets RELATIVE to the Anchor's Pivot
-                        val userOffset = FloatArray(16)
-                        Matrix.setIdentityM(userOffset, 0)
-                        Matrix.translateM(userOffset, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
-                        Matrix.rotateM(userOffset, 0, mRotationX, 1f, 0f, 0f)
-                        Matrix.rotateM(userOffset, 0, mRotationY, 0f, 1f, 0f)
-                        Matrix.rotateM(userOffset, 0, mRotationZ, 0f, 0f, 1f)
-                        Matrix.scaleM(userOffset, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
+                        // 2. Apply transformations DIRECTLY to the anchor matrix (Standard Practice)
+                        Matrix.translateM(anchorMatrix, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
+                        Matrix.rotateM(anchorMatrix, 0, mRotationX, 1f, 0f, 0f)
+                        Matrix.rotateM(anchorMatrix, 0, mRotationY, 0f, 1f, 0f)
+                        Matrix.rotateM(anchorMatrix, 0, mRotationZ, 0f, 0f, 1f)
+                        Matrix.scaleM(anchorMatrix, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
 
-                        Matrix.multiplyMM(anchorMatrix, 0, baseAnchorMatrix, 0, userOffset, 0)
-
+                        // 3. Draw
                         val viewModelMatrix = FloatArray(16)
                         Matrix.multiplyMM(viewModelMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
                         drawBox(projectionMatrix, viewModelMatrix)
@@ -265,12 +262,19 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         if (bestHit != null) {
             val hitPose = bestHit.hitPose
-            // NO LONGER FORCING UPRIGHT. Use hitPose orientation directly for 6-DoF stability.
+            
+            // For ground planes, we force UPRIGHT to prevent annoying tilt on placement.
+            // For depth points, we use the original hitPose for better handheld alignment.
+            val finalPose = if (bestHit.trackable is com.google.ar.core.Plane) {
+                 com.google.ar.core.Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
+            } else {
+                hitPose
+            }
             
             // GL Thread safe update
             resetAnchor()
             synchronized(this) {
-                currentAnchor = bestHit.trackable.createAnchor(hitPose)
+                currentAnchor = bestHit.trackable.createAnchor(finalPose)
             }
             
             (context as MainActivity).runOnUiThread {
