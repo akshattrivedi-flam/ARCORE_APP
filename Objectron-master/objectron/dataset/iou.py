@@ -28,7 +28,7 @@ class IoU(object):
       intersection_volume = sp.ConvexHull(self._intersection_points).volume
       box1_volume = self._box1.volume
       box2_volume = self._box2.volume
-      union_volume = box1_volume + box2_volume - intersection_volume
+      union_volume = box1_vzolume + box2_volume - intersection_volume
       return intersection_volume / union_volume
     else:
       return 0.
