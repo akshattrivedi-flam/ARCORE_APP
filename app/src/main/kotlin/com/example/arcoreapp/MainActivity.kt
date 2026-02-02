@@ -154,6 +154,8 @@ class MainActivity : AppCompatActivity() {
         binding.statusText.text = "Box anchored. Adjust fit below."
     }
 
+    private var lastStatusState = ""
+
     fun onFrameRendered(frame: Frame, mvp: FloatArray, model: FloatArray, view: FloatArray) {
         if (isRecording && !isProcessingFrame) {
             val currentTime = System.currentTimeMillis()
@@ -163,27 +165,33 @@ class MainActivity : AppCompatActivity() {
             }
         }
         
-        // DYNAMIC SNAP: Check for Coke Marker
+        // DYNAMIC SNAP (Researcher Option B) - Optimized
         val updatedImages = frame.getUpdatedTrackables(AugmentedImage::class.java)
         val markerImage = updatedImages.firstOrNull { it.name == "coke_marker" && it.trackingState == TrackingState.TRACKING }
+        
         if (markerImage != null) {
             renderer.trackedImage = markerImage
-            runOnUiThread {
-                binding.statusText.text = "Tracking Object: ${markerImage.name}"
-            }
+            updateStatusTextOnce("Tracking Object: ${markerImage.name}")
         } else {
-             // Optional: keep last tracked if tracking is paused? 
-             // For now, only track if active.
-             if (updatedImages.any { it.name == "coke_marker" && it.trackingState == TrackingState.STOPPED }) {
+             // If we lost the marker, clear it so we can use World Anchors/Table Mode
+             if (renderer.trackedImage?.trackingState != TrackingState.TRACKING) {
                  renderer.trackedImage = null
              }
         }
 
-        // Update UI status
+        // Update UI status only if needed
+        if (renderer.currentAnchor == null && renderer.trackedImage == null) {
+            updateStatusTextOnce("Scanning... Place marker or tap surface.")
+        } else if (renderer.currentAnchor != null && renderer.trackedImage == null) {
+            updateStatusTextOnce("Box anchored. Adjust fit below.")
+        }
+    }
+
+    private fun updateStatusTextOnce(text: String) {
+        if (lastStatusState == text) return
+        lastStatusState = text
         runOnUiThread {
-            if (renderer.currentAnchor == null) {
-                binding.statusText.text = "Scanning... Place marker or tap surface."
-            }
+            binding.statusText.text = text
         }
     }
 
