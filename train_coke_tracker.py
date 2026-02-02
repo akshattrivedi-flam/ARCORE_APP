@@ -14,8 +14,8 @@ DATA_DIR = "/home/user/Desktop/ARCORE_APP/video_01_red"
 JSON_PATH = os.path.join(DATA_DIR, "annotations.json")
 BATCH_SIZE = 16
 LR = 0.001
-EPOCHS = 80 # Increased for better convergence
-IMG_SIZE = 224  # Standard MobileNet Input
+EPOCHS = 100 # Increased for higher resolution convergence
+IMG_SIZE = 320  # Higher resolution for better fit accuracy
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # --- DATASET CLASS ---
@@ -130,7 +130,7 @@ def train_model():
     
     model = CokeTrackerReduced().to(DEVICE)
     
-    criterion = nn.MSELoss() # L2 Loss for regression
+    criterion = nn.L1Loss() # L1 Loss (MAE) encourages sharper fits than MSE
     optimizer = optim.Adam(model.parameters(), lr=LR)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
 
