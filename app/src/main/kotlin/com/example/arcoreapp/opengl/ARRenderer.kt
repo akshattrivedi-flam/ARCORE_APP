@@ -22,6 +22,8 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var projectionMatrix = FloatArray(16)
     private var viewMatrix = FloatArray(16)
     private var anchorMatrix = FloatArray(16)
+    private var smoothedMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
+    private val SMOOTHING_FACTOR = 0.15f // Lower = smoother, higher = faster
 
     private var positionHandle = -1
     private var colorHandle = -1
@@ -192,53 +194,44 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 // --- DYNAMIC TARGET LOGIC (Follow-the-Marker) ---
                 val activeImage = trackedImage
                 if (activeImage != null && activeImage.trackingState == com.google.ar.core.TrackingState.TRACKING) {
-                    val poseMatrix = FloatArray(16)
-                    activeImage.centerPose.toMatrix(poseMatrix, 0)
+                    val currentPoseMatrix = FloatArray(16)
+                    activeImage.centerPose.toMatrix(currentPoseMatrix, 0)
+                    
+                    // Temporal smoothing to prevent can-warp drift
+                    for (i in 0..15) {
+                        smoothedMatrix[i] = smoothedMatrix[i] + SMOOTHING_FACTOR * (currentPoseMatrix[i] - smoothedMatrix[i])
+                    }
                     
                     val userOffset = FloatArray(16)
                     Matrix.setIdentityM(userOffset, 0)
-                    // In tracked mode, translation is relative to the marker's center
                     Matrix.translateM(userOffset, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
                     Matrix.rotateM(userOffset, 0, mRotationX, 1f, 0f, 0f)
                     Matrix.rotateM(userOffset, 0, mRotationY, 0f, 1f, 0f)
                     Matrix.rotateM(userOffset, 0, mRotationZ, 0f, 0f, 1f)
                     Matrix.scaleM(userOffset, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
 
-                    Matrix.multiplyMM(anchorMatrix, 0, poseMatrix, 0, userOffset, 0)
+                    Matrix.multiplyMM(anchorMatrix, 0, smoothedMatrix, 0, userOffset, 0)
                     val viewModelMatrix = FloatArray(16)
                     Matrix.multiplyMM(viewModelMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
                     drawBox(projectionMatrix, viewModelMatrix)
                     
                 } else if (isCameraLocked) {
-                    // --- THE ZERO-DRIFT H.U.D. PIVOT ---
-                    // 1. Start with the current Camera Pose as our Base
+                    val directModelView = FloatArray(16)
+                    Matrix.setIdentityM(directModelView, 0)
+                    val totalZMeter = -(mManualDepth + mTranslationZ) / 100f
+                    Matrix.translateM(directModelView, 0, mTranslationX / 100f, mTranslationY / 100f, totalZMeter)
+                    Matrix.rotateM(directModelView, 0, mRotationX, 1f, 0f, 0f)
+                    Matrix.rotateM(directModelView, 0, mRotationY, 0f, 1f, 0f)
+                    Matrix.rotateM(directModelView, 0, mRotationZ, 0f, 0f, 1f)
+                    Matrix.scaleM(directModelView, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
+
+                    // ZERO-DRIFT DRAW
+                    drawBox(projectionMatrix, directModelView)
+
+                    // EXPORT ANNOTATION MATRIX
                     val cameraPoseMatrix = FloatArray(16)
                     camera.pose.toMatrix(cameraPoseMatrix, 0)
-                    
-                    // 2. Create the User Offset Matrix (Translation -> Rotation -> Scale)
-                    val userOffset = FloatArray(16)
-                    Matrix.setIdentityM(userOffset, 0)
-                    
-                    // Move the box to the distance (Z) and user offset (X, Y)
-                    val totalZMeter = -(mManualDepth + mTranslationZ) / 100f
-                    Matrix.translateM(userOffset, 0, mTranslationX / 100f, mTranslationY / 100f, totalZMeter)
-                    
-                    // CRITICAL: Rotate the box around its OWN center in Camera Space
-                    Matrix.rotateM(userOffset, 0, mRotationX, 1f, 0f, 0f)
-                    Matrix.rotateM(userOffset, 0, mRotationY, 0f, 1f, 0f)
-                    Matrix.rotateM(userOffset, 0, mRotationZ, 0f, 0f, 1f)
-                    
-                    // Final Scale
-                    Matrix.scaleM(userOffset, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
-
-                    // 3. PARENTING: anchorMatrix = CameraPose * UserOffset
-                    // This creates a rock-solid 'glued' effect to the screen
-                    Matrix.multiplyMM(anchorMatrix, 0, cameraPoseMatrix, 0, userOffset, 0)
-
-                    // 4. DRAW: Using the actual projection and view matrices
-                    val viewModelMatrix = FloatArray(16)
-                    Matrix.multiplyMM(viewModelMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
-                    drawBox(projectionMatrix, viewModelMatrix)
+                    Matrix.multiplyMM(anchorMatrix, 0, cameraPoseMatrix, 0, directModelView, 0)
                 } else {
                     // --- WORLD ANCHOR MODE (Standard ARCore Surface Tracking) ---
                     val anchor = currentAnchor

@@ -173,8 +173,8 @@ class MainActivity : AppCompatActivity() {
             renderer.trackedImage = markerImage
             updateStatusTextOnce("Tracking Object: ${markerImage.name}")
         } else {
-             // If we lost the marker, clear it so we can use World Anchors/Table Mode
-             if (renderer.trackedImage?.trackingState != TrackingState.TRACKING) {
+             // Only clear if the image is actually STOPPED (lost), not just PAUSED (occluded)
+             if (renderer.trackedImage?.trackingState == TrackingState.STOPPED) {
                  renderer.trackedImage = null
              }
         }
