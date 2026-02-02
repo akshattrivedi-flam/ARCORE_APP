@@ -163,14 +163,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
         
-        // AUTO-SNAP to Augmented Image (Option B)
-        frame.getUpdatedTrackables(AugmentedImage::class.java).forEach { image ->
-            if (image.trackingState == TrackingState.TRACKING && image.name == "coke_marker") {
-                renderer.snapToImage(image)
-                runOnUiThread {
-                    binding.statusText.text = "Marker Detected: Auto-Snapped Box!"
-                }
+        // DYNAMIC SNAP: Check for Coke Marker
+        val updatedImages = frame.getUpdatedTrackables(AugmentedImage::class.java)
+        val markerImage = updatedImages.firstOrNull { it.name == "coke_marker" && it.trackingState == TrackingState.TRACKING }
+        if (markerImage != null) {
+            renderer.trackedImage = markerImage
+            runOnUiThread {
+                binding.statusText.text = "Tracking Object: ${markerImage.name}"
             }
+        } else {
+             // Optional: keep last tracked if tracking is paused? 
+             // For now, only track if active.
+             if (updatedImages.any { it.name == "coke_marker" && it.trackingState == TrackingState.STOPPED }) {
+                 renderer.trackedImage = null
+             }
         }
 
         // Update UI status

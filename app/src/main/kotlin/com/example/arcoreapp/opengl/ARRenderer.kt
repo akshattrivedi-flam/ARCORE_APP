@@ -72,6 +72,8 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     @Volatile var currentAnchor: Anchor? = null
         private set
+    
+    @Volatile var trackedImage: com.google.ar.core.AugmentedImage? = null
 
     @Synchronized
     fun resetAnchor() {
@@ -187,7 +189,27 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 camera.getProjectionMatrix(projectionMatrix, 0, 0.1f, 100.0f)
                 camera.getViewMatrix(viewMatrix, 0)
 
-                if (isCameraLocked) {
+                // --- DYNAMIC TARGET LOGIC (Follow-the-Marker) ---
+                val activeImage = trackedImage
+                if (activeImage != null && activeImage.trackingState == com.google.ar.core.TrackingState.TRACKING) {
+                    val poseMatrix = FloatArray(16)
+                    activeImage.centerPose.toMatrix(poseMatrix, 0)
+                    
+                    val userOffset = FloatArray(16)
+                    Matrix.setIdentityM(userOffset, 0)
+                    // In tracked mode, translation is relative to the marker's center
+                    Matrix.translateM(userOffset, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
+                    Matrix.rotateM(userOffset, 0, mRotationX, 1f, 0f, 0f)
+                    Matrix.rotateM(userOffset, 0, mRotationY, 0f, 1f, 0f)
+                    Matrix.rotateM(userOffset, 0, mRotationZ, 0f, 0f, 1f)
+                    Matrix.scaleM(userOffset, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
+
+                    Matrix.multiplyMM(anchorMatrix, 0, poseMatrix, 0, userOffset, 0)
+                    val viewModelMatrix = FloatArray(16)
+                    Matrix.multiplyMM(viewModelMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
+                    drawBox(projectionMatrix, viewModelMatrix)
+                    
+                } else if (isCameraLocked) {
                     // --- THE ZERO-DRIFT H.U.D. PIVOT ---
                     // 1. Start with the current Camera Pose as our Base
                     val cameraPoseMatrix = FloatArray(16)
