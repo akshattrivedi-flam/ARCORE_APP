@@ -88,11 +88,35 @@ def main():
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    # 4. Inference Loop with Smoothing
-    # Alpha: 0.0 -> Infinite smoothing (no update), 1.0 -> No smoothing (raw raw)
-    # 0.2 is a good balance for handheld objects
-    GRID_ALPHA = 0.2 
-    smoothed_preds = None
+    # 4. Inference & Tracking Loop
+    # Hybrid Strategy: CNN + Optical Flow + RANSAC PnP + Kalman Filter
+    
+    GRID_ALPHA = 0.3 
+    
+    prev_gray = None
+    prev_box_pts = None 
+    
+    # --- KALMAN FILTER SETUP ---
+    # State: [tx, ty, tz, rx, ry, rz, v_tx, v_ty, v_tz, v_rx, v_ry, v_rz] (12 vars)
+    # Measurement: [tx, ty, tz, rx, ry, rz] (6 vars)
+    kalman = cv2.KalmanFilter(12, 6)
+    kalman.transitionMatrix = np.eye(12, dtype=np.float32)
+    # Velocity transfer
+    kalman.transitionMatrix[0, 6] = 1.0 # tx += v_tx
+    kalman.transitionMatrix[1, 7] = 1.0 # ty += v_ty
+    kalman.transitionMatrix[2, 8] = 1.0 # tz += v_tz
+    kalman.transitionMatrix[3, 9] = 1.0 # rx += v_rx
+    kalman.transitionMatrix[4, 10] = 1.0 # ry += v_ry
+    kalman.transitionMatrix[5, 11] = 1.0 # rz += v_rz
+    
+    kalman.measurementMatrix = np.eye(6, 12, dtype=np.float32)
+    kalman.processNoiseCov = np.eye(12, dtype=np.float32) * 1e-4
+    kalman.measurementNoiseCov = np.eye(6, dtype=np.float32) * 1e-2
+    kalman.errorCovPost = np.eye(12, dtype=np.float32)
+    
+    # Initialize with default pose
+    kalman.statePost = np.zeros((12, 1), dtype=np.float32)
+    kalman.statePost[2] = 0.5 # Default Z depth 0.5m
 
     frame_idx = 0
     while cap.isOpened():
@@ -109,51 +133,107 @@ def main():
         pil_img = transforms.ToPILImage()(img_rgb)
         input_tensor = preprocess(pil_img).unsqueeze(0).to(DEVICE)
         
-        # Inference
+        # Prepare for Optical Flow (Gray)
+        curr_gray = cv2.cvtColor(frame_rot, cv2.COLOR_BGR2GRAY)
+        
+        # Inference (CNN)
         with torch.no_grad():
-            raw_preds = model(input_tensor).cpu().numpy()[0] # [18,]
-            
-        # --- TEMPORAL SMOOTHING ---
-        if smoothed_preds is None:
-            smoothed_preds = raw_preds
-        else:
-            smoothed_preds = (GRID_ALPHA * raw_preds) + ((1 - GRID_ALPHA) * smoothed_preds)
-            
-        preds = smoothed_preds
+            raw_flat = model(input_tensor).cpu().numpy()[0] # [18,]
         
-        # --- SOLVE PNP (GEOMETRIC CORRECTION) ---
-        # 1. Reshape preds to (9, 2)
+        # Reshape CNN result to (9, 2)
+        cnn_pts = []
         h, w = frame_rot.shape[:2]
-        image_points = []
         for i in range(0, 18, 2):
-            px = preds[i] * w
-            py = preds[i+1] * h
-            image_points.append([px, py])
-        image_points = np.array(image_points, dtype=np.float32)
+            cnn_pts.append([raw_flat[i]*w, raw_flat[i+1]*h])
+        cnn_pts = np.array(cnn_pts, dtype=np.float32)
+
+        # --- HYBRID TRACKING ---
+        final_pts = cnn_pts # Default to CNN
         
-        # 2. Solve PnP
-        success, rvec, tvec = cv2.solvePnP(
+        if prev_gray is not None and prev_box_pts is not None:
+            # 1. OPTICAL FLOW: Track points from last frame
+            flow_pts, status, err = cv2.calcOpticalFlowPyrLK(
+                prev_gray, curr_gray, prev_box_pts, None, 
+                winSize=(21, 21), maxLevel=3,
+                criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
+            )
+            
+            # 2. VALIDATE FLOW directly
+            # Check if flow diverged too far from CNN (Drift check)
+            # If flow is good, we fuse.
+            
+            # Simple fuse: Avg(Flow, CNN)
+            # Actually, to get "Perfect Fit", we trust Flow almost 100% for short term
+            # But we drag it back to CNN to prevent long term drift.
+            
+            valid_idx = status.flatten() == 1
+            if np.mean(valid_idx) > 0.5: # If tracking succeeded for most points
+                # Weighted Fusion
+                fused = (1.0 - GRID_ALPHA) * flow_pts + (GRID_ALPHA) * cnn_pts
+                final_pts = fused
+            else:
+                final_pts = cnn_pts # Lost tracking, reset to CNN
+
+        # Update State
+        prev_gray = curr_gray.copy()
+        prev_box_pts = final_pts
+        
+        # Flatten for drawing & PnP logic
+        preds = final_pts.flatten()
+        
+        # Normalize back to 0-1 for PnP logic (which expects denormalized, wait)
+        # The code below expects `preds` to be 0-1 normalized flat array?
+        # Let's check: "px = preds[i] * w". Yes.
+        # But `final_pts` is already in pixels.
+        # So we must avoid re-multiplying by W/H below.
+        
+        # --- SOLVE PNP RANSAC (ROBUST GEOMETRY) ---
+        # RANSAC will ignore outlier points that don't fit the rigid 3D model
+        image_points = final_pts.astype(np.float32)
+        
+        # We need at least 4 points for PnP
+        success, rvec, tvec, inliers = cv2.solvePnPRansac(
             CANONICAL_BOX_3D, 
             image_points, 
             CAMERA_MATRIX, 
-            DIST_COEFFS,
-             
+            DIST_COEFFS, 
+            iterationsCount=100,
+            reprojectionError=8.0,
+            confidence=0.99,
             flags=cv2.SOLVEPNP_ITERATIVE
         )
         
+        # --- KALMAN UPDATE STEP ---
+        # Predict next state
+        prediction = kalman.predict()
+        
         if success:
-            # 3. Project Rigid Points back
-            projected_points, _ = cv2.projectPoints(CANONICAL_BOX_3D, rvec, tvec, CAMERA_MATRIX, DIST_COEFFS)
-            pts = [tuple(map(int, p.ravel())) for p in projected_points]
+            # Update Kalman with new measurement
+            measurement = np.array([
+                [tvec[0][0]], [tvec[1][0]], [tvec[2][0]],
+                [rvec[0][0]], [rvec[1][0]], [rvec[2][0]]
+            ], dtype=np.float32)
+            kalman.correct(measurement)
+            
+            # Use Corrected State
+            final_state = kalman.statePost
         else:
-            # Fallback to raw predictions if PnP fails
-            pts = [tuple(map(int, p)) for p in image_points]
+            # Use Predicted State (Coast through occlusion)
+            final_state = prediction
+
+        # Extract Smooth Pose
+        smooth_tvec = final_state[0:3]
+        smooth_rvec = final_state[3:6]
+
+        # Project Rigid Points back using SMOOTHED pose
+        projected_points, _ = cv2.projectPoints(CANONICAL_BOX_3D, smooth_rvec, smooth_tvec, CAMERA_MATRIX, DIST_COEFFS)
+        pts = [tuple(map(int, p.ravel())) for p in projected_points]
 
         # Draw points
         for i, p in enumerate(pts):
             color = (0, 0, 255) if i == 0 else (255, 0, 0)
             cv2.circle(frame_rot, p, 4, color, -1)
-            
+                
         # Draw Connections (Green)
         conns = get_connections()
         for start, end in conns:

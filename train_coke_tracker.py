@@ -11,12 +11,33 @@ import copy
 
 # --- CONFIGURATION ---
 DATA_DIR = "/home/user/Desktop/ARCORE_APP/video_01_red"
+# COMPOSITED_DIR removed to train on RAW frames
 JSON_PATH = os.path.join(DATA_DIR, "annotations.json")
 BATCH_SIZE = 16
-LR = 0.001
-EPOCHS = 100 # Increased for higher resolution convergence
-IMG_SIZE = 320  # Higher resolution for better fit accuracy
+LR = 0.0005 # Lower LR for precision
+EPOCHS = 100
+IMG_SIZE = 320 # Keep high res
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# --- CUSTOM AUGMENTATION ---
+class RandomCutout(object):
+    """Randomly mask out a rectangular chunk of the image to force structure learning."""
+    def __init__(self, p=0.5, scale=(0.02, 0.2)):
+        self.p = p
+        self.scale = scale
+
+    def __call__(self, img):
+        if torch.rand(1) < self.p:
+            c, h, w = img.shape
+            # Cutout logic
+            cut_h = int(h * np.random.uniform(*self.scale))
+            cut_w = int(w * np.random.uniform(*self.scale))
+            
+            y = np.random.randint(0, h - cut_h)
+            x = np.random.randint(0, w - cut_w)
+            
+            img[:, y:y+cut_h, x:x+cut_w] = 0.0 # Black out
+        return img
 
 # --- DATASET CLASS ---
 class CokeDataset(Dataset):
@@ -28,15 +49,11 @@ class CokeDataset(Dataset):
         with open(json_path, 'r') as f:
             self.annotations = json.load(f)
             
-        # Filter out frames with low visibility if needed, or valid files
         self.valid_annotations = []
         for ann in self.annotations:
             img_path = os.path.join(root_dir, ann['image'])
             if os.path.exists(img_path):
-                self.valid_annotations.append(ann)
-            else:
-                pass 
-                # print(f"Warning: {img_path} missing.")
+                self.valid_annotations.append(ann) 
 
     def __len__(self):
         return len(self.valid_annotations)
@@ -54,13 +71,10 @@ class CokeDataset(Dataset):
         h, w, _ = img.shape
         
         # 3. Rotate Image 90 deg Clockwise (Landscape 640x480 -> Portrait 480x640)
-        # As per the previous verification step
         img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-        new_h, new_w, _ = img.shape # Should be 640, 480 if original was 480, 640?
-        # Wait: cv2.rotate 90 CW:
-        # If input is 640(w)x480(h), output is 480(w)x640(h).
         
         # 4. Transform Keypoints (Equation: x_new = 1 - y_old, y_new = x_old)
+        # Because we rotated the IMAGE 90 deg, we must rotate the COORDINATES 90 deg.
         raw_kpts = ann['keypoints_2d'] # [x, y, depth] normalized
         transformed_kpts = []
         for kp in raw_kpts:
@@ -114,14 +128,18 @@ class CokeTrackerReduced(nn.Module):
 def train_model():
     print(f"Using device: {DEVICE}")
 
-    # Strong Augmentations to force shape recognition, not pixel memorization
-    # UPDATED: Heavier Blur and Jitter for "Real World" robustness
+    # FINAL ROBUST TRANSFORMS
+    # 1. Geometry Preservation: We resize carefully.
+    # 2. Appearance Invariance: ColorJitter + Blur.
+    # 3. Structure Forcing: Cutout (prevents memorizing labels).
+    
     train_transform = transforms.Compose([
-        transforms.Resize((IMG_SIZE, IMG_SIZE)),
+        transforms.Resize((IMG_SIZE, IMG_SIZE)), # Simple resize is fine as network adapts, but Cutout is key.
         transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
-        transforms.RandomGrayscale(p=0.1),
-        transforms.GaussianBlur(kernel_size=(5, 9), sigma=(0.1, 3.0)),
+        transforms.RandomGrayscale(p=0.15),
+        transforms.GaussianBlur(kernel_size=(5, 9), sigma=(0.1, 2.5)),
         transforms.ToTensor(),
+        RandomCutout(p=0.5), # <--- NEW: Forces model to "imagine" missing parts
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 

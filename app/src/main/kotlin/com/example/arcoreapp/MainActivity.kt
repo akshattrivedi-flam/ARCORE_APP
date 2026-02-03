@@ -118,7 +118,7 @@ class MainActivity : AppCompatActivity() {
             if (arSession!!.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
                 config.depthMode = Config.DepthMode.AUTOMATIC
             }
-            config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
+            config.instantPlacementMode = Config.InstantPlacementMode.DISABLED // Force stable Plane tracking for dataset recording
             config.focusMode = Config.FocusMode.AUTO
             config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
             
@@ -179,9 +179,15 @@ class MainActivity : AppCompatActivity() {
              }
         }
 
-        // Update UI status only if needed
+        // Update UI status based on tracking state
         if (renderer.currentAnchor == null && renderer.trackedImage == null) {
-            updateStatusTextOnce("Scanning... Place marker or tap surface.")
+            // Check if we have any valid planes for feedback
+            val isPlaneDetected = renderer.hasTrackingPlane()
+            if (isPlaneDetected) {
+                updateStatusTextOnce("Surface Detected! Tap to Place.")
+            } else {
+                updateStatusTextOnce("Scanning... Move device to detect floor.")
+            }
         } else if (renderer.currentAnchor != null && renderer.trackedImage == null) {
             updateStatusTextOnce("Box anchored. Adjust fit below.")
         }

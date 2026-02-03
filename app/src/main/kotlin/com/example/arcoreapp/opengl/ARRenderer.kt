@@ -267,13 +267,13 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         if (camera.trackingState != com.google.ar.core.TrackingState.TRACKING) return
 
         val hits = frame.hitTest(tap)
-        // Priority: Horizontal Plane -> Depth Point
+        // PRIORITY: STRICTLY HORIZONTAL PLANES ONLY for Data Recording Stability
         val bestHit = hits.firstOrNull { hit ->
             val t = hit.trackable
             (t is com.google.ar.core.Plane && t.trackingState == com.google.ar.core.TrackingState.TRACKING && 
-             t.type == com.google.ar.core.Plane.Type.HORIZONTAL_UPWARD_FACING) ||
-            (t is com.google.ar.core.DepthPoint && t.trackingState == com.google.ar.core.TrackingState.TRACKING)
-        } ?: hits.firstOrNull { it.trackable.trackingState == com.google.ar.core.TrackingState.TRACKING }
+             t.type == com.google.ar.core.Plane.Type.HORIZONTAL_UPWARD_FACING)
+        }
+        // Removed fallback to DepthPoint to prevent drift.
 
         if (bestHit != null) {
             val hitPose = bestHit.hitPose
@@ -326,4 +326,12 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
     
     fun getTextureId(): Int = backgroundRenderer.textureId
+    
+    fun hasTrackingPlane(): Boolean {
+        val session = this.session ?: return false
+        return session.getAllTrackables(com.google.ar.core.Plane::class.java).any { 
+            it.trackingState == com.google.ar.core.TrackingState.TRACKING &&
+            it.type == com.google.ar.core.Plane.Type.HORIZONTAL_UPWARD_FACING
+        }
+    }
 }
