@@ -1,13 +1,52 @@
 import torch
 import cv2
 import numpy as np
-from torchvision import transforms
-from train_coke_tracker import CokeTrackerReduced, IMG_SIZE, DEVICE
+import torch.nn as nn
+from torchvision import transforms, models
+# from train_coke_tracker import CokeTrackerReduced, IMG_SIZE, DEVICE # Redefine locally to ensure sync
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# --- MODEL DEFINITION (Must Match Training) ---
+class CokeTrackerReduced(nn.Module):
+    def __init__(self):
+        super(CokeTrackerReduced, self).__init__()
+        # MobileNetV3 Small Backbone
+        self.backbone = models.mobilenet_v3_small(pretrained=False) # Weights loaded manually later
+        
+        # Replace Classifier
+        num_features = self.backbone.classifier[0].in_features
+        
+        # 1. Regression Head (18 coordinates)
+        self.regressor = nn.Sequential(
+            nn.Linear(num_features, 1024),
+            nn.Hardswish(),
+            nn.Dropout(p=0.3), 
+            nn.Linear(1024, 18), 
+            nn.Sigmoid() 
+        )
+        
+        # 2. Classification Head (1 scalar: Is it a Red Coke?)
+        self.classifier = nn.Sequential(
+            nn.Linear(num_features, 512),
+            nn.Hardswish(),
+            nn.Dropout(p=0.3),
+            nn.Linear(512, 1)
+        )
+        
+        self.backbone.classifier = nn.Identity()
+
+    def forward(self, x):
+        x = self.backbone.features(x)
+        x = self.backbone.avgpool(x)
+        x = torch.flatten(x, 1)
+        kpts = self.regressor(x)
+        conf = self.classifier(x)
+        return kpts, conf
 
 # --- CONFIG ---
-VIDEO_PATH = "/home/user/Desktop/ARCORE_APP/video_01_red/video_raw.mp4"
-MODEL_PATH = "/home/user/Desktop/ARCORE_APP/video_01_red/coke_tracker_mobilenetv3.pth"
-OUTPUT_PATH = "/home/user/Desktop/ARCORE_APP/video_01_red/inference_result.mp4"
+VIDEO_PATH = "/home/user/Desktop/ARCORE_APP/DATASET_TRAINING/red/video_10_red/video_raw.mp4"
+MODEL_PATH = "/home/user/Desktop/ARCORE_APP/DATASET_TRAINING/coke_tracker_checkpoint_60.pth"
+OUTPUT_PATH = "/home/user/Desktop/ARCORE_APP/DATASET_TRAINING/red/video_10_red/inference_check_60.mp4"
 
 # --- 3D GEOMETRY CONSTANTS ---
 # Estimated Coke Can Box (in meters) roughly derived from keypoints
@@ -73,9 +112,9 @@ def main():
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     
-    # We will output a ROTATED video (Portrait)
-    # If input is 640x480, output is 480x640
-    out_width, out_height = height, width
+    # We will output in ORIGINAL Resolution (Landscape)
+    # If input is 640x480, output is 640x480
+    out_width, out_height = width, height
     
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(OUTPUT_PATH, fourcc, fps, (out_width, out_height))
@@ -138,7 +177,27 @@ def main():
         
         # Inference (CNN)
         with torch.no_grad():
-            raw_flat = model(input_tensor).cpu().numpy()[0] # [18,]
+            kpts_raw, conf_raw = model(input_tensor)
+            
+            # 1. Check Confidence
+            conf_score = torch.sigmoid(conf_raw).item()
+            
+            if conf_score < 0.5:
+                # NEGATIVE DETECTED (Background, Blue, Silver)
+                # Skip Drawing, just write ORIGINAL frame
+                out.write(frame)
+                
+                # Reset Tracking State if confidence drops
+                prev_gray = None
+                prev_box_pts = None
+                
+                if frame_idx % 30 == 0:
+                   print(f"Frame {frame_idx}: No Object (Conf: {conf_score:.4f})")
+                frame_idx += 1
+                continue
+
+            # OBJECT FOUND
+            raw_flat = kpts_raw.cpu().numpy()[0] # [18,]
         
         # Reshape CNN result to (9, 2)
         cnn_pts = []
@@ -242,7 +301,9 @@ def main():
                 # But connection list handles indices 1-8 primarily
                 cv2.line(frame_rot, pts[start], pts[end], (0, 255, 0), 2)
                 
-        out.write(frame_rot)
+        # Rotate BACK to Original Orientation (Landscape / 90 CCW)
+        frame_final = cv2.rotate(frame_rot, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        out.write(frame_final)
         
         if frame_idx % 30 == 0:
             print(f"Processed frame {frame_idx}")
