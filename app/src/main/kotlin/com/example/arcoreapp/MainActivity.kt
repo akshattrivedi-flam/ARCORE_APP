@@ -269,8 +269,8 @@ class MainActivity : AppCompatActivity() {
         // R_adjust = [0 -1 0; 1 0 0; 0 0 1]
         val rAdjust = FloatArray(16)
         Matrix.setIdentityM(rAdjust, 0)
-        rAdjust[0] = 0f; rAdjust[4] = -1f;
-        rAdjust[1] = 1f; rAdjust[5] = 0f;
+        rAdjust[0] = 0f; rAdjust[4] = 1f;
+        rAdjust[1] = -1f; rAdjust[5] = 0f;
         
         // New View = R_adjust * Old View
         // Note: ARCore View Matrix is Row-Major? No, OpenGL is Column-Major.
