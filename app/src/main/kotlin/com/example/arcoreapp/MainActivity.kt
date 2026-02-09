@@ -206,13 +206,86 @@ class MainActivity : AppCompatActivity() {
         isProcessingFrame = true
         val camera = frame.camera
         
-        // OBJECTRON SYNC: In custom OpenGL, use the SAME view matrix as rendering
-        // but for some Objectron scripts, the raw sensor matrix is better.
-        // We calculate both or stick to what matches the IMAGE (the display).
+        // 1. Acquire Camera Image (YUV-420-888)
+        val image = try {
+            frame.acquireCameraImage()
+        } catch (e: Exception) {
+            null
+        }
+        
+        if (image == null) {
+            isProcessingFrame = false
+            return
+        }
+
+        // 2. Convert to Bitmap (640x480 Landscape) using robust YuvImage approach
+        val rawBitmap = try {
+            val bmp = YuvToRgbConverter.yuvToBitmap(image)
+            image.close() // Release YUV image immediately
+            bmp
+        } catch (e: Exception) {
+            image.close()
+            e.printStackTrace()
+            isProcessingFrame = false
+            return
+        }
+
+        if (rawBitmap == null) {
+            isProcessingFrame = false
+            return
+        }
+
+        // 3. Rotate to Portrait (480x640) - 90 Degrees Clockwise
+        val matrix = android.graphics.Matrix()
+        // ARCore sensor is usually 90 degrees off from Portrait screen
+        matrix.postRotate(90f)
+        val rotatedBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+        
+        // Recycle raw bitmap to save memory
+        // rawBitmap.recycle() // (Optional, depending on GC pressure, but safest to let GC handle it given we create a new one)
+
+        // 4. Adjust Matrices and Intrinsics for 90 deg Rotation (Unification to 480x640)
+        
+        // Intrinsics Adjustment:
+        // x_new = -y_old, y_new = x_old (Coordinate mapping)
+        // fx' = fy, fy' = fx, cx' = h - cy, cy' = cx
+        val intrinsics = camera.imageIntrinsics
+        val oldLx = intrinsics.imageDimensions[0] // 640
+        val oldLy = intrinsics.imageDimensions[1] // 480
+        val oldFx = intrinsics.focalLength[0]
+        val oldFy = intrinsics.focalLength[1]
+        val oldCx = intrinsics.principalPoint[0]
+        val oldCy = intrinsics.principalPoint[1]
+
+        val newFx = oldFy
+        val newFy = oldFx
+        val newCx = oldLy - oldCy
+        val newCy = oldCx
+        val newW = oldLy // 480
+        val newH = oldLx // 640
+
+        // View Matrix Adjustment (Rotation around Z by +90 deg in Camera Frame):
+        // Maps P_old(x,y,z) to P_new(-y, x, z)
+        // R_adjust = [0 -1 0; 1 0 0; 0 0 1]
+        val rAdjust = FloatArray(16)
+        Matrix.setIdentityM(rAdjust, 0)
+        rAdjust[0] = 0f; rAdjust[4] = -1f;
+        rAdjust[1] = 1f; rAdjust[5] = 0f;
+        
+        // New View = R_adjust * Old View
+        // Note: ARCore View Matrix is Row-Major? No, OpenGL is Column-Major.
+        // Android Matrix multiplies: result = lhs * rhs.
+        // We want P_new = R_adjust * (View * P_world).
+        // So NewView = R_adjust * View.
+        
+        // Recalculate sensor view (inverse of pose)
         val sensorViewMatrix = FloatArray(16)
         camera.pose.inverse().toMatrix(sensorViewMatrix, 0)
+        
+        val newViewMatrix = FloatArray(16)
+        Matrix.multiplyMM(newViewMatrix, 0, rAdjust, 0, sensorViewMatrix, 0)
 
-        // Extract Sparse Point Cloud
+        // Extract Sparse Point Cloud (Optional, keep as is)
         val pointCloud = mutableListOf<List<Float>>()
         try {
             val rawCloud = frame.acquirePointCloud()
@@ -224,28 +297,21 @@ class MainActivity : AppCompatActivity() {
             rawCloud.release()
         } catch (e: Exception) {}
 
-        val intrinsics = camera.imageIntrinsics
         val frameId = frameCount++
         val imageName = "frame_${String.format("%04d", frameId)}.jpg"
         
         val entry = AnnotationGenerator.createEntry(
-            frameId, imageName, model, sensorViewMatrix, mvp, pointCloud,
-            intrinsics.focalLength[0], intrinsics.focalLength[1],
-            intrinsics.principalPoint[0], intrinsics.principalPoint[1],
-            intrinsics.imageDimensions[0], intrinsics.imageDimensions[1],
+            frameId, imageName, model, newViewMatrix, mvp, pointCloud,
+            newFx, newFy,
+            newCx, newCy,
+            newW, newH,
             selectedCategory,
             System.currentTimeMillis()
         )
 
-        // CAPTURE RAW FRAME WITH OVERLAY
-        // We capture binding.root or glSurfaceView to ensure annotations are saved in the frame as requested.
-        val bitmap = Bitmap.createBitmap(glSurfaceView.width, glSurfaceView.height, Bitmap.Config.ARGB_8888)
-        PixelCopy.request(glSurfaceView, bitmap, { result ->
-            if (result == PixelCopy.SUCCESS) {
-                captureManager.saveFrame(bitmap, entry)
-            }
-            isProcessingFrame = false
-        }, glSurfaceView.handler)
+        // Save the Rotated (Unixfied) Frame
+        captureManager.saveFrame(rotatedBitmap, entry)
+        isProcessingFrame = false
     }
 
     override fun onResume() {
