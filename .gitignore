@@ -16,8 +16,6 @@ local.properties
 # Large Data & Checkpoints
 coke_can_pose_estimation/data/
 coke_can_pose_estimation/env/
-coke_can_pose_estimation/models/
-coke_can_pose_estimation/inference/
 DATASET_TRAINING/
 MODELS_AND_TRAINING_BOTTLE/
 

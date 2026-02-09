@@ -1,0 +1,20 @@
+# Exclude virtual environment
+env/
+.venv/
+
+# Exclude large data directory
+data/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE settings
+.vscode/
+.idea/
+
+# Explicitly allow tracking these for THIS folder, overriding global gitignore
+!*.pth
+!*.onnx
+!*.mp4
