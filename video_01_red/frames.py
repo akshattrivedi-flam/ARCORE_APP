@@ -1,7 +1,7 @@
 import subprocess
 import json
 
-video_path = "/home/user/Desktop/video_01_red/video_raw.mp4"
+video_path = "/home/user/Desktop/ARCORE_APP/coke_can_pose_estimation/experiments/video_raw.mp4"
 
 cmd = [
     "ffprobe",
