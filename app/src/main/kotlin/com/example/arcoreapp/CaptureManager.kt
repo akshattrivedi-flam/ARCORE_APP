@@ -70,7 +70,7 @@ class CaptureManager(private val context: Context) {
         val annFile = File(annDir, entry.image)
         
         // 1. Create Annotated Version
-        val annotatedBitmap = drawBoxOnBitmap(bitmap, entry.keypoints_2d)
+        val annotatedBitmap = drawBoxOnBitmap(bitmap, entry.keypoints2d)
         
         scope.launch(ioDispatcher) {
             try {
