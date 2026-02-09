@@ -49,27 +49,30 @@ MODEL_PATH = "/home/user/Desktop/ARCORE_APP/DATASET_TRAINING/coke_tracker_checkp
 OUTPUT_PATH = "/home/user/Desktop/ARCORE_APP/DATASET_TRAINING/red/video_10_red/inference_check_60.mp4"
 
 # --- 3D GEOMETRY CONSTANTS ---
-# Estimated Coke Can Box (in meters) roughly derived from keypoints
-# Centroid is 0,0,0
-# Order: Centroid, Front-TL, Front-TR, Front-BR, Front-BL, Back-TL, Back-TR, Back-BR, Back-BL
-# Calculated Averages: W=0.1390, H=0.0690, D=0.0630
-# NOTE: The axis mapping might be different.
-# Based on the aspect ratio (H/W = 0.5), it seems X is longest (Height of can?).
-# Let's assign:
-# Axis 0 (X): 0.1390 -> Can Height
-# Axis 1 (Y): 0.0690 -> Can Width
-# Axis 2 (Z): 0.0630 -> Can Depth
-half_w, half_h, half_d = 0.1390/2, 0.0690/2, 0.0630/2
+# Estimated Coke Can Box (in meters) derived from annotations.json
+# Analysis of Model Matrix and Keypoints indicates:
+# Y-axis is Height (Long axis ~15.5cm)
+# X and Z are Width/Depth (~6.5cm)
+# Dimensions: W=0.065, H=0.155, D=0.065
+half_w = 0.065 / 2.0  # X
+half_h = 0.155 / 2.0  # Y (Height)
+half_d = 0.065 / 2.0  # Z
+
+# Vertices 1-8
+# Analysis of annotations.json (and implicit Objectron convention):
+# 1-4: Front Face. 5-8: Back Face.
+# 1: Top-Right, 2: Bottom-Right, 3: Bottom-Left, 4: Top-Left
+# Y is Height (Up/Down). X is Width (Right/Left). Z is Depth (Front/Back).
 CANONICAL_BOX_3D = np.array([
     [0, 0, 0], # Centroid
-    [half_w, -half_h, -half_d],   # 1
-    [half_w, -half_h, half_d],    # 2
-    [-half_w, -half_h, half_d],   # 3
-    [-half_w, -half_h, -half_d],  # 4
-    [half_w, half_h, -half_d],    # 5
-    [half_w, half_h, half_d],     # 6
-    [-half_w, half_h, half_d],    # 7
-    [-half_w, half_h, -half_d]    # 8
+    [half_w, half_h, -half_d],   # 1: Top-Right-Front
+    [half_w, -half_h, -half_d],  # 2: Bottom-Right-Front
+    [-half_w, -half_h, -half_d], # 3: Bottom-Left-Front
+    [-half_w, half_h, -half_d],  # 4: Top-Left-Front
+    [half_w, half_h, half_d],    # 5: Top-Right-Back
+    [half_w, -half_h, half_d],   # 6: Bottom-Right-Back
+    [-half_w, -half_h, half_d],  # 7: Bottom-Left-Back
+    [-half_w, half_h, half_d]    # 8: Top-Left-Back
 ], dtype=np.float32)
 
 # Camera Matrix (Intrinsics from json)
@@ -218,13 +221,6 @@ def main():
             )
             
             # 2. VALIDATE FLOW directly
-            # Check if flow diverged too far from CNN (Drift check)
-            # If flow is good, we fuse.
-            
-            # Simple fuse: Avg(Flow, CNN)
-            # Actually, to get "Perfect Fit", we trust Flow almost 100% for short term
-            # But we drag it back to CNN to prevent long term drift.
-            
             valid_idx = status.flatten() == 1
             if np.mean(valid_idx) > 0.5: # If tracking succeeded for most points
                 # Weighted Fusion
@@ -237,33 +233,33 @@ def main():
         prev_gray = curr_gray.copy()
         prev_box_pts = final_pts
         
-        # Flatten for drawing & PnP logic
-        preds = final_pts.flatten()
-        
-        # Normalize back to 0-1 for PnP logic (which expects denormalized, wait)
-        # The code below expects `preds` to be 0-1 normalized flat array?
-        # Let's check: "px = preds[i] * w". Yes.
-        # But `final_pts` is already in pixels.
-        # So we must avoid re-multiplying by W/H below.
-        
         # --- SOLVE PNP RANSAC (ROBUST GEOMETRY) ---
-        # RANSAC will ignore outlier points that don't fit the rigid 3D model
+        # Scale Intrinsics
+        base_w, base_h = 480, 640
+        h, w = frame_rot.shape[:2]
+        scale_x = w / base_w
+        scale_y = h / base_h
+        
+        scaled_matrix = CAMERA_MATRIX.copy()
+        scaled_matrix[0, 0] *= scale_x # fx
+        scaled_matrix[1, 1] *= scale_y # fy
+        scaled_matrix[0, 2] *= scale_x # cx
+        scaled_matrix[1, 2] *= scale_y # cy
+
         image_points = final_pts.astype(np.float32)
         
-        # We need at least 4 points for PnP
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
             CANONICAL_BOX_3D, 
             image_points, 
-            CAMERA_MATRIX, 
+            scaled_matrix, 
             DIST_COEFFS, 
             iterationsCount=100,
-            reprojectionError=8.0,
+            reprojectionError=10.0,
             confidence=0.99,
             flags=cv2.SOLVEPNP_ITERATIVE
         )
         
         # --- KALMAN UPDATE STEP ---
-        # Predict next state
         prediction = kalman.predict()
         
         if success:
@@ -285,7 +281,7 @@ def main():
         smooth_rvec = final_state[3:6]
 
         # Project Rigid Points back using SMOOTHED pose
-        projected_points, _ = cv2.projectPoints(CANONICAL_BOX_3D, smooth_rvec, smooth_tvec, CAMERA_MATRIX, DIST_COEFFS)
+        projected_points, _ = cv2.projectPoints(CANONICAL_BOX_3D, smooth_rvec, smooth_tvec, scaled_matrix, DIST_COEFFS)
         pts = [tuple(map(int, p.ravel())) for p in projected_points]
 
         # Draw points
@@ -297,10 +293,8 @@ def main():
         conns = get_connections()
         for start, end in conns:
             if start < len(pts) and end < len(pts):
-                # Skip centroid connections for cleaner look if desired
-                # But connection list handles indices 1-8 primarily
                 cv2.line(frame_rot, pts[start], pts[end], (0, 255, 0), 2)
-                
+
         # Rotate BACK to Original Orientation (Landscape / 90 CCW)
         frame_final = cv2.rotate(frame_rot, cv2.ROTATE_90_COUNTERCLOCKWISE)
         out.write(frame_final)
