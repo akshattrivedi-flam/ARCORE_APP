@@ -5,6 +5,8 @@ import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
 import com.google.ar.core.Anchor
+import com.google.ar.core.AugmentedImage
+import com.google.ar.core.Pose
 import com.google.ar.core.Session
 import com.example.arcoreapp.MainActivity
 import javax.microedition.khronos.egl.EGLConfig
@@ -23,7 +25,11 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var viewMatrix = FloatArray(16)
     private var anchorMatrix = FloatArray(16)
     private var smoothedMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
-    private val SMOOTHING_FACTOR = 0.15f // Lower = smoother, higher = faster
+    private val poseTranslationAlpha = 0.20f
+    private val poseRotationAlpha = 0.18f
+    private var poseInitialized = false
+    private val smoothedTranslation = FloatArray(3)
+    private val smoothedQuaternion = FloatArray(4) // [x,y,z,w]
 
     private var positionHandle = -1
     private var colorHandle = -1
@@ -65,6 +71,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile var isAutoDepthEnabled = false // Continuous depth tracking
     @Volatile var isCylinderMode = false // Toggle between Box and Cylinder
     @Volatile var isRecordingCapture = false
+    @Volatile var enableLiveMarkerFollow = false // Disabled for production stability; use anchor lock instead.
 
     // Bounding Box Color [R, G, B, A]
     @Volatile var mBoxColor = floatArrayOf(1.0f, 0.0f, 0.0f, 0.3f) // Default Red
@@ -90,9 +97,83 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         if (image != null && image.trackingState == com.google.ar.core.TrackingState.TRACKING) {
             resetAnchor()
             currentAnchor = image.createAnchor(image.centerPose)
+            resetPoseSmoothing()
             image.centerPose.toMatrix(smoothedMatrix, 0)
             trackedImage = null
         }
+    }
+
+    @Synchronized
+    fun resetPoseSmoothing() {
+        poseInitialized = false
+        Matrix.setIdentityM(smoothedMatrix, 0)
+    }
+
+    private fun normalizeQuat(q: FloatArray): FloatArray {
+        val n = kotlin.math.sqrt((q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).toDouble()).toFloat()
+        if (n <= 1e-8f) return floatArrayOf(0f, 0f, 0f, 1f)
+        return floatArrayOf(q[0] / n, q[1] / n, q[2] / n, q[3] / n)
+    }
+
+    private fun slerpQuat(q0In: FloatArray, q1In: FloatArray, t: Float): FloatArray {
+        var q0 = normalizeQuat(q0In)
+        var q1 = normalizeQuat(q1In)
+        var dot = q0[0] * q1[0] + q0[1] * q1[1] + q0[2] * q1[2] + q0[3] * q1[3]
+
+        if (dot < 0f) {
+            dot = -dot
+            q1 = floatArrayOf(-q1[0], -q1[1], -q1[2], -q1[3])
+        }
+
+        if (dot > 0.9995f) {
+            val out = floatArrayOf(
+                q0[0] + t * (q1[0] - q0[0]),
+                q0[1] + t * (q1[1] - q0[1]),
+                q0[2] + t * (q1[2] - q0[2]),
+                q0[3] + t * (q1[3] - q0[3])
+            )
+            return normalizeQuat(out)
+        }
+
+        val theta0 = kotlin.math.acos(dot.toDouble()).toFloat()
+        val sinTheta0 = kotlin.math.sin(theta0.toDouble()).toFloat().coerceAtLeast(1e-8f)
+        val theta = theta0 * t
+        val sinTheta = kotlin.math.sin(theta.toDouble()).toFloat()
+        val s0 = kotlin.math.cos(theta.toDouble()).toFloat() - dot * sinTheta / sinTheta0
+        val s1 = sinTheta / sinTheta0
+        return floatArrayOf(
+            s0 * q0[0] + s1 * q1[0],
+            s0 * q0[1] + s1 * q1[1],
+            s0 * q0[2] + s1 * q1[2],
+            s0 * q0[3] + s1 * q1[3]
+        )
+    }
+
+    private fun updateSmoothedPose(targetPose: Pose): Pose {
+        val t = targetPose.translation
+        val q = targetPose.rotationQuaternion // [x,y,z,w]
+        if (!poseInitialized) {
+            smoothedTranslation[0] = t[0]
+            smoothedTranslation[1] = t[1]
+            smoothedTranslation[2] = t[2]
+            smoothedQuaternion[0] = q[0]
+            smoothedQuaternion[1] = q[1]
+            smoothedQuaternion[2] = q[2]
+            smoothedQuaternion[3] = q[3]
+            poseInitialized = true
+        } else {
+            smoothedTranslation[0] += poseTranslationAlpha * (t[0] - smoothedTranslation[0])
+            smoothedTranslation[1] += poseTranslationAlpha * (t[1] - smoothedTranslation[1])
+            smoothedTranslation[2] += poseTranslationAlpha * (t[2] - smoothedTranslation[2])
+            val qOut = slerpQuat(smoothedQuaternion, q, poseRotationAlpha)
+            smoothedQuaternion[0] = qOut[0]
+            smoothedQuaternion[1] = qOut[1]
+            smoothedQuaternion[2] = qOut[2]
+            smoothedQuaternion[3] = qOut[3]
+        }
+        val pT = Pose.makeTranslation(smoothedTranslation[0], smoothedTranslation[1], smoothedTranslation[2])
+        val pR = Pose.makeRotation(smoothedQuaternion[0], smoothedQuaternion[1], smoothedQuaternion[2], smoothedQuaternion[3])
+        return pT.compose(pR)
     }
 
     fun placeInAir(useDepth: Boolean = true) {
@@ -144,6 +225,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         resetAnchor()
         synchronized(this) {
             currentAnchor = image.createAnchor(image.centerPose)
+            resetPoseSmoothing()
             image.centerPose.toMatrix(smoothedMatrix, 0)
         }
     }
@@ -206,15 +288,16 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
                 // --- DYNAMIC TARGET LOGIC (Follow-the-Marker) ---
                 val activeImage = if (isRecordingCapture) null else trackedImage
-                if (activeImage != null && activeImage.trackingState == com.google.ar.core.TrackingState.TRACKING) {
-                    val currentPoseMatrix = FloatArray(16)
-                    activeImage.centerPose.toMatrix(currentPoseMatrix, 0)
-                    
-                    // Temporal smoothing to prevent can-warp drift
-                    for (i in 0..15) {
-                        smoothedMatrix[i] = smoothedMatrix[i] + SMOOTHING_FACTOR * (currentPoseMatrix[i] - smoothedMatrix[i])
-                    }
-                    
+                if (
+                    enableLiveMarkerFollow &&
+                    activeImage != null &&
+                    activeImage.trackingState == com.google.ar.core.TrackingState.TRACKING &&
+                    activeImage.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING
+                ) {
+                    // Pose-level smoothing avoids matrix shearing/drift artifacts.
+                    val filteredPose = updateSmoothedPose(activeImage.centerPose)
+                    filteredPose.toMatrix(smoothedMatrix, 0)
+
                     val userOffset = FloatArray(16)
                     Matrix.setIdentityM(userOffset, 0)
                     Matrix.translateM(userOffset, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
@@ -229,6 +312,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
                     drawBox(projectionMatrix, viewModelMatrix)
                     
                 } else if (isCameraLocked) {
+                    resetPoseSmoothing()
                     val directModelView = FloatArray(16)
                     Matrix.setIdentityM(directModelView, 0)
                     val totalZMeter = -(mManualDepth + mTranslationZ) / 100f
@@ -246,6 +330,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
                     camera.pose.toMatrix(cameraPoseMatrix, 0)
                     Matrix.multiplyMM(anchorMatrix, 0, cameraPoseMatrix, 0, directModelView, 0)
                 } else {
+                    resetPoseSmoothing()
                     // --- WORLD ANCHOR MODE (Standard ARCore Surface Tracking) ---
                     val anchor = currentAnchor
                     if (anchor != null && anchor.trackingState == com.google.ar.core.TrackingState.TRACKING) {

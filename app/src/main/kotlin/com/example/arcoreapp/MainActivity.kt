@@ -41,10 +41,12 @@ class MainActivity : AppCompatActivity() {
     private var isProcessingFrame = false
     private var lastFrameTime = 0L
     private var selectedCategory = "red" // Default to red coke
+    private var stableMarkerFrames = 0
 
     companion object {
         private const val CAMERA_PERMISSION_CODE = 100
         private const val CAPTURE_SIZE = 512
+        private const val MARKER_STABLE_FRAMES_REQUIRED = 8
     }
 
     private var installRequested = false
@@ -120,6 +122,7 @@ class MainActivity : AppCompatActivity() {
                 config.depthMode = Config.DepthMode.AUTOMATIC
             }
             config.instantPlacementMode = Config.InstantPlacementMode.DISABLED // Force stable Plane tracking for dataset recording
+            config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
             config.focusMode = Config.FocusMode.AUTO
             config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
             
@@ -167,19 +170,34 @@ class MainActivity : AppCompatActivity() {
         }
         
         // Keep marker updates disabled while recording to avoid dynamic anchor drift.
-        if (!isRecording) {
+        if (!isRecording && renderer.currentAnchor == null) {
             val updatedImages = frame.getUpdatedTrackables(AugmentedImage::class.java)
             val markerImage =
-                updatedImages.firstOrNull { it.name == "coke_marker" && it.trackingState == TrackingState.TRACKING }
+                updatedImages.firstOrNull {
+                    it.name == "coke_marker" &&
+                        it.trackingState == TrackingState.TRACKING &&
+                        it.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING
+                }
 
             if (markerImage != null) {
                 renderer.trackedImage = markerImage
-                updateStatusTextOnce("Tracking Object: ${markerImage.name}")
+                stableMarkerFrames += 1
+                if (renderer.currentAnchor == null && stableMarkerFrames >= MARKER_STABLE_FRAMES_REQUIRED) {
+                    renderer.snapToImage(markerImage)
+                    renderer.trackedImage = null
+                    stableMarkerFrames = 0
+                    updateStatusTextOnce("Marker locked. Box anchored to can.")
+                } else {
+                    updateStatusTextOnce("Tracking marker... (${stableMarkerFrames}/${MARKER_STABLE_FRAMES_REQUIRED})")
+                }
             } else {
+                stableMarkerFrames = 0
                 if (renderer.trackedImage?.trackingState == TrackingState.STOPPED) {
                     renderer.trackedImage = null
                 }
             }
+        } else if (renderer.currentAnchor != null) {
+            stableMarkerFrames = 0
         }
 
         // Update UI status based on tracking state
@@ -430,6 +448,7 @@ class MainActivity : AppCompatActivity() {
         renderer.mTranslationX = transX; renderer.mTranslationY = transY; renderer.mTranslationZ = transZ
         
         renderer.resetAnchor()
+        stableMarkerFrames = 0
         
         binding.statusText.text = "Transforms reset. Tap to re-anchor."
         Toast.makeText(this, "All values reset to defaults", Toast.LENGTH_SHORT).show()
@@ -459,8 +478,17 @@ class MainActivity : AppCompatActivity() {
     private fun toggleRecording() {
         if (!isRecording) {
             if (renderer.currentAnchor == null) {
-                Toast.makeText(this, "Place box first!", Toast.LENGTH_SHORT).show()
-                return
+                val marker = renderer.trackedImage
+                if (marker != null &&
+                    marker.trackingState == TrackingState.TRACKING &&
+                    marker.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING
+                ) {
+                    renderer.snapToImage(marker)
+                    renderer.trackedImage = null
+                } else {
+                    Toast.makeText(this, "Place box first!", Toast.LENGTH_SHORT).show()
+                    return
+                }
             }
             renderer.pinCurrentTrackedImageAsAnchor()
             renderer.isRecordingCapture = true
@@ -471,6 +499,7 @@ class MainActivity : AppCompatActivity() {
             binding.fpsText.text = "Status: RECORDING ($selectedCategory)"
         } else {
             renderer.isRecordingCapture = false
+            renderer.resetPoseSmoothing()
             isRecording = false
             captureManager.finishSequence(selectedCategory, arSession)
             updateProgressUI()
