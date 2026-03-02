@@ -5,14 +5,20 @@ import com.google.gson.annotations.SerializedName
 data class AnnotationEntry(
     @SerializedName("frame_id") val frameId: Int,
     @SerializedName("image") val image: String,
+    @SerializedName("orientation_pitch_deg") val orientationPitchDeg: Float,
+    @SerializedName("orientation_label") val orientationLabel: String,
     @SerializedName("keypoints_2d") val keypoints2d: List<List<Float>>,
     @SerializedName("keypoints_3d") val keypoints3d: List<List<Float>>,
     @SerializedName("visibility") val visibility: List<Float>,
+    @SerializedName("keypoints_2d_visibility") val keypoints2dVisibility: List<Float>,
     @SerializedName("camera_intrinsics") val cameraIntrinsics: CameraIntrinsics,
     @SerializedName("view_matrix") val viewMatrix: List<Float>,
     @SerializedName("model_matrix") val modelMatrix: List<Float>,
+    @SerializedName("pose_6dof") val pose6dof: Pose6Dof,
+    @SerializedName("pose_9dof") val pose9dof: Pose9Dof,
     @SerializedName("mvp_matrix") val mvpMatrix: List<Float>,
     @SerializedName("point_cloud") val pointCloud: List<List<Float>>?,
+    @SerializedName("environment") val environment: EnvironmentMeta,
     @SerializedName("label") val label: String,
     @SerializedName("timestamp") val timestamp: Long
 )
@@ -24,6 +30,22 @@ data class CameraIntrinsics(
     @SerializedName("cy") val cy: Float,
     @SerializedName("image_width") val imageWidth: Int,
     @SerializedName("image_height") val imageHeight: Int
+)
+
+data class Pose6Dof(
+    @SerializedName("translation") val translation: List<Float>,
+    @SerializedName("rotation") val rotation: List<Float>
+)
+
+data class Pose9Dof(
+    @SerializedName("translation") val translation: List<Float>,
+    @SerializedName("rotation") val rotation: List<Float>,
+    @SerializedName("scale") val scale: List<Float>
+)
+
+data class EnvironmentMeta(
+    @SerializedName("source") val source: String,
+    @SerializedName("tracking_mode") val trackingMode: String
 )
 
 object AnnotationGenerator {
@@ -39,6 +61,23 @@ object AnnotationGenerator {
         floatArrayOf(0.5f, 1.0f, -0.5f), // 7: Back-Top-Right
         floatArrayOf(-0.5f, 1.0f, -0.5f) // 8: Back-Top-Left
     )
+
+    private fun computeRotationAndScale(modelMatrix: FloatArray): Pair<List<Float>, List<Float>> {
+        val c0 = floatArrayOf(modelMatrix[0], modelMatrix[1], modelMatrix[2])
+        val c1 = floatArrayOf(modelMatrix[4], modelMatrix[5], modelMatrix[6])
+        val c2 = floatArrayOf(modelMatrix[8], modelMatrix[9], modelMatrix[10])
+
+        val sx = kotlin.math.sqrt(c0[0] * c0[0] + c0[1] * c0[1] + c0[2] * c0[2]).coerceAtLeast(1e-8f)
+        val sy = kotlin.math.sqrt(c1[0] * c1[0] + c1[1] * c1[1] + c1[2] * c1[2]).coerceAtLeast(1e-8f)
+        val sz = kotlin.math.sqrt(c2[0] * c2[0] + c2[1] * c2[1] + c2[2] * c2[2]).coerceAtLeast(1e-8f)
+
+        val rot = listOf(
+            c0[0] / sx, c1[0] / sy, c2[0] / sz,
+            c0[1] / sx, c1[1] / sy, c2[1] / sz,
+            c0[2] / sx, c1[2] / sy, c2[2] / sz
+        )
+        return Pair(rot, listOf(sx, sy, sz))
+    }
 
     fun createEntry(
         frameId: Int,
@@ -80,17 +119,26 @@ object AnnotationGenerator {
             listOf(ptCam4[0], ptCam4[1], -ptCam4[2])
         }
 
+        val translation = listOf(modelMatrix[12], modelMatrix[13], modelMatrix[14])
+        val (rotation, scale) = computeRotationAndScale(modelMatrix)
+
         return AnnotationEntry(
             frameId = frameId,
             image = imageName,
+            orientationPitchDeg = 0f,
+            orientationLabel = "arcore_capture",
             keypoints2d = keypoints2d,
             keypoints3d = keypoints3d,
             visibility = visibility,
+            keypoints2dVisibility = visibility,
             cameraIntrinsics = CameraIntrinsics(fx, fy, cx, cy, width, height),
             viewMatrix = viewMatrix.toList(),
             modelMatrix = modelMatrix.toList(),
+            pose6dof = Pose6Dof(translation = translation, rotation = rotation),
+            pose9dof = Pose9Dof(translation = translation, rotation = rotation, scale = scale),
             mvpMatrix = mvpMatrix.toList(),
             pointCloud = pointCloudCam,
+            environment = EnvironmentMeta(source = "arcore_app", trackingMode = "marker_or_anchor"),
             label = label,
             timestamp = timestamp
         )

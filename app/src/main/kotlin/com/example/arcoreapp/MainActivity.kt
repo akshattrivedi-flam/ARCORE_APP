@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val CAMERA_PERMISSION_CODE = 100
+        private const val CAPTURE_SIZE = 512
     }
 
     private var installRequested = false
@@ -165,18 +166,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
         
-        // DYNAMIC SNAP (Researcher Option B) - Optimized
-        val updatedImages = frame.getUpdatedTrackables(AugmentedImage::class.java)
-        val markerImage = updatedImages.firstOrNull { it.name == "coke_marker" && it.trackingState == TrackingState.TRACKING }
-        
-        if (markerImage != null) {
-            renderer.trackedImage = markerImage
-            updateStatusTextOnce("Tracking Object: ${markerImage.name}")
-        } else {
-             // Only clear if the image is actually STOPPED (lost), not just PAUSED (occluded)
-             if (renderer.trackedImage?.trackingState == TrackingState.STOPPED) {
-                 renderer.trackedImage = null
-             }
+        // Keep marker updates disabled while recording to avoid dynamic anchor drift.
+        if (!isRecording) {
+            val updatedImages = frame.getUpdatedTrackables(AugmentedImage::class.java)
+            val markerImage =
+                updatedImages.firstOrNull { it.name == "coke_marker" && it.trackingState == TrackingState.TRACKING }
+
+            if (markerImage != null) {
+                renderer.trackedImage = markerImage
+                updateStatusTextOnce("Tracking Object: ${markerImage.name}")
+            } else {
+                if (renderer.trackedImage?.trackingState == TrackingState.STOPPED) {
+                    renderer.trackedImage = null
+                }
+            }
         }
 
         // Update UI status based on tracking state
@@ -235,55 +238,38 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // 3. Rotate to Portrait (480x640) - 90 Degrees Clockwise
-        val matrix = android.graphics.Matrix()
-        // ARCore sensor is usually 90 degrees off from Portrait screen
-        matrix.postRotate(90f)
-        val rotatedBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
-        
-        // Recycle raw bitmap to save memory
-        // rawBitmap.recycle() // (Optional, depending on GC pressure, but safest to let GC handle it given we create a new one)
+        // 3. Convert camera image to square 512x512 by center-crop + resize.
+        val srcW = rawBitmap.width
+        val srcH = rawBitmap.height
+        val cropSide = minOf(srcW, srcH)
+        val cropLeft = (srcW - cropSide) / 2
+        val cropTop = (srcH - cropSide) / 2
+        val croppedBitmap = Bitmap.createBitmap(rawBitmap, cropLeft, cropTop, cropSide, cropSide)
+        val finalBitmap = Bitmap.createScaledBitmap(croppedBitmap, CAPTURE_SIZE, CAPTURE_SIZE, true)
+        if (croppedBitmap !== rawBitmap) {
+            croppedBitmap.recycle()
+        }
+        rawBitmap.recycle()
 
-        // 4. Adjust Matrices and Intrinsics for 90 deg Rotation (Unification to 480x640)
-        
-        // Intrinsics Adjustment:
-        // x_new = -y_old, y_new = x_old (Coordinate mapping)
-        // fx' = fy, fy' = fx, cx' = h - cy, cy' = cx
+        // 4. Intrinsics remap for crop+resize to 512x512.
         val intrinsics = camera.imageIntrinsics
-        val oldLx = intrinsics.imageDimensions[0] // 640
-        val oldLy = intrinsics.imageDimensions[1] // 480
+        val oldLx = intrinsics.imageDimensions[0]
+        val oldLy = intrinsics.imageDimensions[1]
         val oldFx = intrinsics.focalLength[0]
         val oldFy = intrinsics.focalLength[1]
         val oldCx = intrinsics.principalPoint[0]
         val oldCy = intrinsics.principalPoint[1]
+        val cropScale = CAPTURE_SIZE.toFloat() / cropSide.toFloat()
+        val newFx = oldFx * cropScale
+        val newFy = oldFy * cropScale
+        val newCx = (oldCx - cropLeft) * cropScale
+        val newCy = (oldCy - cropTop) * cropScale
+        val newW = CAPTURE_SIZE
+        val newH = CAPTURE_SIZE
 
-        val newFx = oldFy
-        val newFy = oldFx
-        val newCx = oldLy - oldCy
-        val newCy = oldCx
-        val newW = oldLy // 480
-        val newH = oldLx // 640
-
-        // View Matrix Adjustment (Rotation around Z by +90 deg in Camera Frame):
-        // Maps P_old(x,y,z) to P_new(-y, x, z)
-        // R_adjust = [0 -1 0; 1 0 0; 0 0 1]
-        val rAdjust = FloatArray(16)
-        Matrix.setIdentityM(rAdjust, 0)
-        rAdjust[0] = 0f; rAdjust[4] = 1f;
-        rAdjust[1] = -1f; rAdjust[5] = 0f;
-        
-        // New View = R_adjust * Old View
-        // Note: ARCore View Matrix is Row-Major? No, OpenGL is Column-Major.
-        // Android Matrix multiplies: result = lhs * rhs.
-        // We want P_new = R_adjust * (View * P_world).
-        // So NewView = R_adjust * View.
-        
-        // Recalculate sensor view (inverse of pose)
-        val sensorViewMatrix = FloatArray(16)
-        camera.pose.inverse().toMatrix(sensorViewMatrix, 0)
-        
+        // Use sensor view matrix directly (no artificial 90-degree rotation transform).
         val newViewMatrix = FloatArray(16)
-        Matrix.multiplyMM(newViewMatrix, 0, rAdjust, 0, sensorViewMatrix, 0)
+        camera.pose.inverse().toMatrix(newViewMatrix, 0)
 
         // Extract Sparse Point Cloud (Optional, keep as is)
         val pointCloud = mutableListOf<List<Float>>()
@@ -298,7 +284,7 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {}
 
         val frameId = frameCount++
-        val imageName = "frame_${String.format("%04d", frameId)}.jpg"
+        val imageName = "frame_${String.format("%04d", frameId)}.png"
         
         val entry = AnnotationGenerator.createEntry(
             frameId, imageName, model, newViewMatrix, mvp, pointCloud,
@@ -309,8 +295,8 @@ class MainActivity : AppCompatActivity() {
             System.currentTimeMillis()
         )
 
-        // Save the Rotated (Unixfied) Frame
-        captureManager.saveFrame(rotatedBitmap, entry)
+        // Save unified 512x512 frame.
+        captureManager.saveFrame(finalBitmap, entry)
         isProcessingFrame = false
     }
 
@@ -476,12 +462,15 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Place box first!", Toast.LENGTH_SHORT).show()
                 return
             }
+            renderer.pinCurrentTrackedImageAsAnchor()
+            renderer.isRecordingCapture = true
             isRecording = true
             frameCount = 0
             captureManager.startNewSequence(selectedCategory, arSession)
             binding.btnRecord.text = "STOP RECORDING"
             binding.fpsText.text = "Status: RECORDING ($selectedCategory)"
         } else {
+            renderer.isRecordingCapture = false
             isRecording = false
             captureManager.finishSequence(selectedCategory, arSession)
             updateProgressUI()

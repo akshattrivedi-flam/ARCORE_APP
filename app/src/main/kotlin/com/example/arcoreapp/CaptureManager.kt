@@ -71,16 +71,21 @@ class CaptureManager(private val context: Context) {
         
         // 1. Create Annotated Version
         val annotatedBitmap = drawBoxOnBitmap(bitmap, entry.keypoints2d)
+        val format = if (entry.image.lowercase(Locale.US).endsWith(".png")) {
+            Bitmap.CompressFormat.PNG
+        } else {
+            Bitmap.CompressFormat.JPEG
+        }
         
         scope.launch(ioDispatcher) {
             try {
                 // Save Clean Frame
                 FileOutputStream(rawFile).use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                    bitmap.compress(format, 100, out)
                 }
                 // Save Annotated Frame
                 FileOutputStream(annFile).use { out ->
-                    annotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                    annotatedBitmap.compress(format, 100, out)
                 }
                 // Clean up annotated bitmap memory
                 annotatedBitmap.recycle()

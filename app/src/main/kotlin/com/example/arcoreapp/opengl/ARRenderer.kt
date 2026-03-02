@@ -64,6 +64,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile var isCameraLocked = false // Handheld stability mode
     @Volatile var isAutoDepthEnabled = false // Continuous depth tracking
     @Volatile var isCylinderMode = false // Toggle between Box and Cylinder
+    @Volatile var isRecordingCapture = false
 
     // Bounding Box Color [R, G, B, A]
     @Volatile var mBoxColor = floatArrayOf(1.0f, 0.0f, 0.0f, 0.3f) // Default Red
@@ -81,6 +82,17 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     fun resetAnchor() {
         currentAnchor?.detach()
         currentAnchor = null
+    }
+
+    @Synchronized
+    fun pinCurrentTrackedImageAsAnchor() {
+        val image = trackedImage
+        if (image != null && image.trackingState == com.google.ar.core.TrackingState.TRACKING) {
+            resetAnchor()
+            currentAnchor = image.createAnchor(image.centerPose)
+            image.centerPose.toMatrix(smoothedMatrix, 0)
+            trackedImage = null
+        }
     }
 
     fun placeInAir(useDepth: Boolean = true) {
@@ -127,11 +139,12 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     fun snapToImage(image: com.google.ar.core.AugmentedImage) {
-        val session = this.session ?: return
+        if (this.session == null) return
         // Create an anchor at the center of the image
         resetAnchor()
         synchronized(this) {
             currentAnchor = image.createAnchor(image.centerPose)
+            image.centerPose.toMatrix(smoothedMatrix, 0)
         }
     }
 
@@ -192,7 +205,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 camera.getViewMatrix(viewMatrix, 0)
 
                 // --- DYNAMIC TARGET LOGIC (Follow-the-Marker) ---
-                val activeImage = trackedImage
+                val activeImage = if (isRecordingCapture) null else trackedImage
                 if (activeImage != null && activeImage.trackingState == com.google.ar.core.TrackingState.TRACKING) {
                     val currentPoseMatrix = FloatArray(16)
                     activeImage.centerPose.toMatrix(currentPoseMatrix, 0)
