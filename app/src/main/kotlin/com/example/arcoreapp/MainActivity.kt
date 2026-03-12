@@ -41,12 +41,9 @@ class MainActivity : AppCompatActivity() {
     private var isProcessingFrame = false
     private var lastFrameTime = 0L
     private var selectedCategory = "red" // Default to red coke
-    private var stableMarkerFrames = 0
-
     companion object {
         private const val CAMERA_PERMISSION_CODE = 100
         private const val CAPTURE_SIZE = 512
-        private const val MARKER_STABLE_FRAMES_REQUIRED = 8
     }
 
     private var installRequested = false
@@ -126,18 +123,6 @@ class MainActivity : AppCompatActivity() {
             config.focusMode = Config.FocusMode.AUTO
             config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
             
-            // --- AUGMENTED IMAGES (Marker-Based Snap) ---
-            val imageDatabase = AugmentedImageDatabase(arSession)
-            try {
-                val inputStream = assets.open("markers/coke_marker.png")
-                val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
-                // We assume the marker is 10cm wide physically on the can
-                imageDatabase.addImage("coke_marker", bitmap, 0.10f)
-            } catch (e: Exception) {
-                Toast.makeText(this, "Failed to load marker: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-            config.augmentedImageDatabase = imageDatabase
-            
             arSession!!.configure(config)
             
             renderer.setArSession(arSession!!)
@@ -169,43 +154,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
         
-        // Marker-based snap is only used for initial lock; never auto-relock afterwards.
-        if (!isRecording && renderer.currentAnchor == null) {
-            val updatedImages = frame.getUpdatedTrackables(AugmentedImage::class.java)
-            val markerImage =
-                updatedImages.firstOrNull {
-                    it.name == "coke_marker" &&
-                        it.trackingState == TrackingState.TRACKING &&
-                        it.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING
-                }
-
-            if (markerImage != null) {
-                renderer.trackedImage = markerImage
-                stableMarkerFrames += 1
-                if (stableMarkerFrames >= MARKER_STABLE_FRAMES_REQUIRED) {
-                    updateStatusTextOnce("Marker stable. Tap to anchor on can.")
-                } else {
-                    updateStatusTextOnce("Tracking marker... (${stableMarkerFrames}/${MARKER_STABLE_FRAMES_REQUIRED})")
-                }
-            } else {
-                stableMarkerFrames = 0
-                renderer.trackedImage = null
-            }
-        } else if (renderer.currentAnchor != null) {
-            stableMarkerFrames = 0
-            renderer.trackedImage = null
-        }
-
         // Update UI status based on tracking state
-        if (renderer.currentAnchor == null && renderer.trackedImage == null) {
+        if (renderer.currentAnchor == null) {
             // Check if we have any valid planes for feedback
             val isPlaneDetected = renderer.hasTrackingPlane()
             if (isPlaneDetected) {
-                updateStatusTextOnce("Surface detected. Tap can/marker to place.")
+                updateStatusTextOnce("Ground surface detected. Tap can base to place.")
             } else {
-                updateStatusTextOnce("Scanning... move around to build tracking map.")
+                updateStatusTextOnce("Scanning... move around to detect ground surface.")
             }
-        } else if (renderer.currentAnchor != null && renderer.trackedImage == null) {
+        } else if (renderer.currentAnchor != null) {
             updateStatusTextOnce("Box anchored. Adjust fit below.")
         }
     }
@@ -430,7 +388,6 @@ class MainActivity : AppCompatActivity() {
         renderer.mTranslationX = transX; renderer.mTranslationY = transY; renderer.mTranslationZ = transZ
         
         renderer.resetAnchor()
-        stableMarkerFrames = 0
         
         binding.statusText.text = "Transforms reset. Tap to re-anchor."
         Toast.makeText(this, "All values reset to defaults", Toast.LENGTH_SHORT).show()
@@ -460,19 +417,9 @@ class MainActivity : AppCompatActivity() {
     private fun toggleRecording() {
         if (!isRecording) {
             if (renderer.currentAnchor == null) {
-                val marker = renderer.trackedImage
-                if (marker != null &&
-                    marker.trackingState == TrackingState.TRACKING &&
-                    marker.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING
-                ) {
-                    renderer.snapToImage(marker)
-                    renderer.trackedImage = null
-                } else {
-                    Toast.makeText(this, "Place box first!", Toast.LENGTH_SHORT).show()
-                    return
-                }
+                Toast.makeText(this, "Place box first!", Toast.LENGTH_SHORT).show()
+                return
             }
-            renderer.pinCurrentTrackedImageAsAnchor()
             renderer.isRecordingCapture = true
             isRecording = true
             frameCount = 0

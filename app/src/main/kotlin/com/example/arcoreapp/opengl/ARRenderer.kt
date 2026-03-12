@@ -5,7 +5,6 @@ import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
 import com.google.ar.core.Anchor
-import com.google.ar.core.AugmentedImage
 import com.google.ar.core.Pose
 import com.google.ar.core.Session
 import com.example.arcoreapp.MainActivity
@@ -24,14 +23,8 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var projectionMatrix = FloatArray(16)
     private var viewMatrix = FloatArray(16)
     private var anchorMatrix = FloatArray(16)
-    private var smoothedMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
     private val lastTrackedAnchorPose = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
     private var hasLastTrackedAnchorPose = false
-    private val poseTranslationAlpha = 0.20f
-    private val poseRotationAlpha = 0.18f
-    private var poseInitialized = false
-    private val smoothedTranslation = FloatArray(3)
-    private val smoothedQuaternion = FloatArray(4) // [x,y,z,w]
 
     private var positionHandle = -1
     private var colorHandle = -1
@@ -73,7 +66,6 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile var isAutoDepthEnabled = false // Continuous depth tracking
     @Volatile var isCylinderMode = false // Toggle between Box and Cylinder
     @Volatile var isRecordingCapture = false
-    @Volatile var enableLiveMarkerFollow = false // Disabled for production stability; use anchor lock instead.
 
     // Bounding Box Color [R, G, B, A]
     @Volatile var mBoxColor = floatArrayOf(1.0f, 0.0f, 0.0f, 0.3f) // Default Red
@@ -84,8 +76,6 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     @Volatile var currentAnchor: Anchor? = null
         private set
-    
-    @Volatile var trackedImage: com.google.ar.core.AugmentedImage? = null
 
     @Synchronized
     fun resetAnchor() {
@@ -95,90 +85,8 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     @Synchronized
-    fun pinCurrentTrackedImageAsAnchor() {
-        val image = trackedImage
-        if (image != null && image.trackingState == com.google.ar.core.TrackingState.TRACKING) {
-            resetAnchor()
-            currentAnchor = image.createAnchor(image.centerPose)
-            resetPoseSmoothing()
-            image.centerPose.toMatrix(smoothedMatrix, 0)
-            image.centerPose.toMatrix(lastTrackedAnchorPose, 0)
-            hasLastTrackedAnchorPose = true
-            trackedImage = null
-        }
-    }
-
-    @Synchronized
     fun resetPoseSmoothing() {
-        poseInitialized = false
-        Matrix.setIdentityM(smoothedMatrix, 0)
-    }
-
-    private fun normalizeQuat(q: FloatArray): FloatArray {
-        val n = kotlin.math.sqrt((q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).toDouble()).toFloat()
-        if (n <= 1e-8f) return floatArrayOf(0f, 0f, 0f, 1f)
-        return floatArrayOf(q[0] / n, q[1] / n, q[2] / n, q[3] / n)
-    }
-
-    private fun slerpQuat(q0In: FloatArray, q1In: FloatArray, t: Float): FloatArray {
-        var q0 = normalizeQuat(q0In)
-        var q1 = normalizeQuat(q1In)
-        var dot = q0[0] * q1[0] + q0[1] * q1[1] + q0[2] * q1[2] + q0[3] * q1[3]
-
-        if (dot < 0f) {
-            dot = -dot
-            q1 = floatArrayOf(-q1[0], -q1[1], -q1[2], -q1[3])
-        }
-
-        if (dot > 0.9995f) {
-            val out = floatArrayOf(
-                q0[0] + t * (q1[0] - q0[0]),
-                q0[1] + t * (q1[1] - q0[1]),
-                q0[2] + t * (q1[2] - q0[2]),
-                q0[3] + t * (q1[3] - q0[3])
-            )
-            return normalizeQuat(out)
-        }
-
-        val theta0 = kotlin.math.acos(dot.toDouble()).toFloat()
-        val sinTheta0 = kotlin.math.sin(theta0.toDouble()).toFloat().coerceAtLeast(1e-8f)
-        val theta = theta0 * t
-        val sinTheta = kotlin.math.sin(theta.toDouble()).toFloat()
-        val s0 = kotlin.math.cos(theta.toDouble()).toFloat() - dot * sinTheta / sinTheta0
-        val s1 = sinTheta / sinTheta0
-        return floatArrayOf(
-            s0 * q0[0] + s1 * q1[0],
-            s0 * q0[1] + s1 * q1[1],
-            s0 * q0[2] + s1 * q1[2],
-            s0 * q0[3] + s1 * q1[3]
-        )
-    }
-
-    private fun updateSmoothedPose(targetPose: Pose): Pose {
-        val t = targetPose.translation
-        val q = targetPose.rotationQuaternion // [x,y,z,w]
-        if (!poseInitialized) {
-            smoothedTranslation[0] = t[0]
-            smoothedTranslation[1] = t[1]
-            smoothedTranslation[2] = t[2]
-            smoothedQuaternion[0] = q[0]
-            smoothedQuaternion[1] = q[1]
-            smoothedQuaternion[2] = q[2]
-            smoothedQuaternion[3] = q[3]
-            poseInitialized = true
-        } else {
-            smoothedTranslation[0] += poseTranslationAlpha * (t[0] - smoothedTranslation[0])
-            smoothedTranslation[1] += poseTranslationAlpha * (t[1] - smoothedTranslation[1])
-            smoothedTranslation[2] += poseTranslationAlpha * (t[2] - smoothedTranslation[2])
-            val qOut = slerpQuat(smoothedQuaternion, q, poseRotationAlpha)
-            smoothedQuaternion[0] = qOut[0]
-            smoothedQuaternion[1] = qOut[1]
-            smoothedQuaternion[2] = qOut[2]
-            smoothedQuaternion[3] = qOut[3]
-        }
-        val pT = Pose.makeTranslation(smoothedTranslation[0], smoothedTranslation[1], smoothedTranslation[2])
-        val pR = Pose.makeRotation(smoothedQuaternion[0], smoothedQuaternion[1], smoothedQuaternion[2], smoothedQuaternion[3])
-        return pT.compose(pR)
+        // Marker smoothing removed in ground-anchor-only mode.
     }
 
     fun placeInAir(useDepth: Boolean = true) {
@@ -224,19 +132,6 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         this.session = session
     }
 
-    fun snapToImage(image: com.google.ar.core.AugmentedImage) {
-        if (this.session == null) return
-        // Create an anchor at the center of the image
-        resetAnchor()
-        synchronized(this) {
-            currentAnchor = image.createAnchor(image.centerPose)
-            resetPoseSmoothing()
-            image.centerPose.toMatrix(smoothedMatrix, 0)
-            image.centerPose.toMatrix(lastTrackedAnchorPose, 0)
-            hasLastTrackedAnchorPose = true
-        }
-    }
-
     @Synchronized
     private fun placeAnchorFromHit(hit: com.google.ar.core.HitResult) {
         resetAnchor()
@@ -246,13 +141,31 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     @Synchronized
-    private fun tryPlaceAnchorFromTrackedMarker(): Boolean {
-        val image = trackedImage ?: return false
-        if (image.trackingState != com.google.ar.core.TrackingState.TRACKING) return false
-        if (image.trackingMethod != AugmentedImage.TrackingMethod.FULL_TRACKING) return false
-        snapToImage(image)
-        trackedImage = null
-        return true
+    private fun placeAnchorOnPlane(plane: com.google.ar.core.Plane, pose: Pose) {
+        resetAnchor()
+        currentAnchor = plane.createAnchor(pose)
+        currentAnchor?.pose?.toMatrix(lastTrackedAnchorPose, 0)
+        hasLastTrackedAnchorPose = true
+    }
+
+    private fun projectPointToPlane(pointPose: Pose, planePose: Pose): FloatArray {
+        val p = pointPose.translation
+        val p0 = planePose.translation
+        val n = FloatArray(3)
+        planePose.getTransformedAxis(1, 1.0f, n, 0) // plane normal (up-axis)
+        val nn = kotlin.math.sqrt((n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).toDouble()).toFloat().coerceAtLeast(1e-8f)
+        n[0] /= nn
+        n[1] /= nn
+        n[2] /= nn
+        val vx = p[0] - p0[0]
+        val vy = p[1] - p0[1]
+        val vz = p[2] - p0[2]
+        val signedDist = vx * n[0] + vy * n[1] + vz * n[2]
+        return floatArrayOf(
+            p[0] - signedDist * n[0],
+            p[1] - signedDist * n[1],
+            p[2] - signedDist * n[2]
+        )
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -311,32 +224,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 camera.getProjectionMatrix(projectionMatrix, 0, 0.1f, 100.0f)
                 camera.getViewMatrix(viewMatrix, 0)
 
-                // --- DYNAMIC TARGET LOGIC (Follow-the-Marker) ---
-                val activeImage = if (isRecordingCapture) null else trackedImage
-                if (
-                    enableLiveMarkerFollow &&
-                    activeImage != null &&
-                    activeImage.trackingState == com.google.ar.core.TrackingState.TRACKING &&
-                    activeImage.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING
-                ) {
-                    // Pose-level smoothing avoids matrix shearing/drift artifacts.
-                    val filteredPose = updateSmoothedPose(activeImage.centerPose)
-                    filteredPose.toMatrix(smoothedMatrix, 0)
-
-                    val userOffset = FloatArray(16)
-                    Matrix.setIdentityM(userOffset, 0)
-                    Matrix.translateM(userOffset, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
-                    Matrix.rotateM(userOffset, 0, mRotationX, 1f, 0f, 0f)
-                    Matrix.rotateM(userOffset, 0, mRotationY, 0f, 1f, 0f)
-                    Matrix.rotateM(userOffset, 0, mRotationZ, 0f, 0f, 1f)
-                    Matrix.scaleM(userOffset, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
-
-                    Matrix.multiplyMM(anchorMatrix, 0, smoothedMatrix, 0, userOffset, 0)
-                    val viewModelMatrix = FloatArray(16)
-                    Matrix.multiplyMM(viewModelMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
-                    drawBox(projectionMatrix, viewModelMatrix)
-                    
-                } else if (isCameraLocked) {
+                if (isCameraLocked) {
                     resetPoseSmoothing()
                     val directModelView = FloatArray(16)
                     Matrix.setIdentityM(directModelView, 0)
@@ -402,37 +290,41 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val tap = queuedTaps.poll() ?: return
         if (camera.trackingState != com.google.ar.core.TrackingState.TRACKING) return
 
-        // Priority 1: if the marker is confidently tracked, anchor directly to marker pose.
-        if (tryPlaceAnchorFromTrackedMarker()) {
-            (context as MainActivity).runOnUiThread {
-                context.onAnchorPlaced()
-            }
-            return
+        val hits = frame.hitTest(tap)
+        val horizontalPlaneHit = hits.firstOrNull { hit ->
+            val t = hit.trackable
+            t is com.google.ar.core.Plane &&
+                t.trackingState == com.google.ar.core.TrackingState.TRACKING &&
+                t.type == com.google.ar.core.Plane.Type.HORIZONTAL_UPWARD_FACING &&
+                t.isPoseInPolygon(hit.hitPose)
+        } ?: return
+
+        val plane = horizontalPlaneHit.trackable as com.google.ar.core.Plane
+        val depthHit = hits.firstOrNull { hit ->
+            val t = hit.trackable
+            t is com.google.ar.core.DepthPoint &&
+                t.trackingState == com.google.ar.core.TrackingState.TRACKING
         }
 
-        val hits = frame.hitTest(tap)
-        val bestHit =
-            hits.firstOrNull { hit ->
-                val t = hit.trackable
-                t is com.google.ar.core.DepthPoint &&
-                    t.trackingState == com.google.ar.core.TrackingState.TRACKING
-            }
-                ?: hits.firstOrNull { hit ->
-                    val t = hit.trackable
-                    t is com.google.ar.core.Plane &&
-                        t.trackingState == com.google.ar.core.TrackingState.TRACKING &&
-                        t.isPoseInPolygon(hit.hitPose)
-                }
-                ?: hits.firstOrNull { hit ->
-                    val t = hit.trackable
-                    t is com.google.ar.core.Point &&
-                        t.trackingState == com.google.ar.core.TrackingState.TRACKING &&
-                        t.orientationMode == com.google.ar.core.Point.OrientationMode.ESTIMATED_SURFACE_NORMAL
-                }
+        if (depthHit != null) {
+            // Ground-anchor strategy:
+            // Use depth at the tap ray (can surface) but project onto the horizontal plane
+            // so the anchor stays physically stable and upright on the ground/table.
+            val projected = projectPointToPlane(depthHit.hitPose, plane.centerPose)
+            val planeRotation = horizontalPlaneHit.hitPose.rotationQuaternion
+            val anchorPose = Pose.makeTranslation(projected[0], projected[1], projected[2]).compose(
+                Pose.makeRotation(
+                    planeRotation[0],
+                    planeRotation[1],
+                    planeRotation[2],
+                    planeRotation[3]
+                )
+            )
+            placeAnchorOnPlane(plane, anchorPose)
+        } else {
+            placeAnchorFromHit(horizontalPlaneHit)
+        }
 
-        if (bestHit == null) return
-
-        placeAnchorFromHit(bestHit)
         (context as MainActivity).runOnUiThread {
             context.onAnchorPlaced()
         }
@@ -470,7 +362,8 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     fun hasTrackingPlane(): Boolean {
         val session = this.session ?: return false
         return session.getAllTrackables(com.google.ar.core.Plane::class.java).any { 
-            it.trackingState == com.google.ar.core.TrackingState.TRACKING
+            it.trackingState == com.google.ar.core.TrackingState.TRACKING &&
+            it.type == com.google.ar.core.Plane.Type.HORIZONTAL_UPWARD_FACING
         }
     }
 }
