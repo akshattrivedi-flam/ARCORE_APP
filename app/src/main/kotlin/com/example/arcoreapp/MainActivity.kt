@@ -183,10 +183,7 @@ class MainActivity : AppCompatActivity() {
                 renderer.trackedImage = markerImage
                 stableMarkerFrames += 1
                 if (stableMarkerFrames >= MARKER_STABLE_FRAMES_REQUIRED) {
-                    renderer.snapToImage(markerImage)
-                    renderer.trackedImage = null
-                    stableMarkerFrames = 0
-                    updateStatusTextOnce("Marker locked. Box anchored to can.")
+                    updateStatusTextOnce("Marker stable. Tap to anchor on can.")
                 } else {
                     updateStatusTextOnce("Tracking marker... (${stableMarkerFrames}/${MARKER_STABLE_FRAMES_REQUIRED})")
                 }
@@ -204,9 +201,9 @@ class MainActivity : AppCompatActivity() {
             // Check if we have any valid planes for feedback
             val isPlaneDetected = renderer.hasTrackingPlane()
             if (isPlaneDetected) {
-                updateStatusTextOnce("Surface Detected! Tap to Place.")
+                updateStatusTextOnce("Surface detected. Tap can/marker to place.")
             } else {
-                updateStatusTextOnce("Scanning... Move device to detect floor.")
+                updateStatusTextOnce("Scanning... move around to build tracking map.")
             }
         } else if (renderer.currentAnchor != null && renderer.trackedImage == null) {
             updateStatusTextOnce("Box anchored. Adjust fit below.")

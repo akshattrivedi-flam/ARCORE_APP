@@ -25,6 +25,8 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var viewMatrix = FloatArray(16)
     private var anchorMatrix = FloatArray(16)
     private var smoothedMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
+    private val lastTrackedAnchorPose = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
+    private var hasLastTrackedAnchorPose = false
     private val poseTranslationAlpha = 0.20f
     private val poseRotationAlpha = 0.18f
     private var poseInitialized = false
@@ -89,6 +91,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     fun resetAnchor() {
         currentAnchor?.detach()
         currentAnchor = null
+        hasLastTrackedAnchorPose = false
     }
 
     @Synchronized
@@ -99,6 +102,8 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
             currentAnchor = image.createAnchor(image.centerPose)
             resetPoseSmoothing()
             image.centerPose.toMatrix(smoothedMatrix, 0)
+            image.centerPose.toMatrix(lastTrackedAnchorPose, 0)
+            hasLastTrackedAnchorPose = true
             trackedImage = null
         }
     }
@@ -227,7 +232,27 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
             currentAnchor = image.createAnchor(image.centerPose)
             resetPoseSmoothing()
             image.centerPose.toMatrix(smoothedMatrix, 0)
+            image.centerPose.toMatrix(lastTrackedAnchorPose, 0)
+            hasLastTrackedAnchorPose = true
         }
+    }
+
+    @Synchronized
+    private fun placeAnchorFromHit(hit: com.google.ar.core.HitResult) {
+        resetAnchor()
+        currentAnchor = hit.createAnchor()
+        currentAnchor?.pose?.toMatrix(lastTrackedAnchorPose, 0)
+        hasLastTrackedAnchorPose = true
+    }
+
+    @Synchronized
+    private fun tryPlaceAnchorFromTrackedMarker(): Boolean {
+        val image = trackedImage ?: return false
+        if (image.trackingState != com.google.ar.core.TrackingState.TRACKING) return false
+        if (image.trackingMethod != AugmentedImage.TrackingMethod.FULL_TRACKING) return false
+        snapToImage(image)
+        trackedImage = null
+        return true
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -333,21 +358,34 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
                     resetPoseSmoothing()
                     // --- WORLD ANCHOR MODE (Standard ARCore Surface Tracking) ---
                     val anchor = currentAnchor
-                    if (anchor != null && anchor.trackingState == com.google.ar.core.TrackingState.TRACKING) {
-                        // 1. Get the raw anchor pose
-                        anchor.pose.toMatrix(anchorMatrix, 0)
-                        
-                        // 2. Apply transformations DIRECTLY to the anchor matrix (Standard Practice)
-                        Matrix.translateM(anchorMatrix, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
-                        Matrix.rotateM(anchorMatrix, 0, mRotationX, 1f, 0f, 0f)
-                        Matrix.rotateM(anchorMatrix, 0, mRotationY, 0f, 1f, 0f)
-                        Matrix.rotateM(anchorMatrix, 0, mRotationZ, 0f, 0f, 1f)
-                        Matrix.scaleM(anchorMatrix, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
+                    if (anchor != null) {
+                        val baseAnchorPose = FloatArray(16)
+                        val hasBasePose = if (anchor.trackingState == com.google.ar.core.TrackingState.TRACKING) {
+                            anchor.pose.toMatrix(baseAnchorPose, 0)
+                            System.arraycopy(baseAnchorPose, 0, lastTrackedAnchorPose, 0, 16)
+                            hasLastTrackedAnchorPose = true
+                            true
+                        } else if (hasLastTrackedAnchorPose) {
+                            System.arraycopy(lastTrackedAnchorPose, 0, baseAnchorPose, 0, 16)
+                            true
+                        } else {
+                            false
+                        }
 
-                        // 3. Draw
-                        val viewModelMatrix = FloatArray(16)
-                        Matrix.multiplyMM(viewModelMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
-                        drawBox(projectionMatrix, viewModelMatrix)
+                        if (hasBasePose) {
+                            val userOffset = FloatArray(16)
+                            Matrix.setIdentityM(userOffset, 0)
+                            Matrix.translateM(userOffset, 0, mTranslationX / 100f, mTranslationY / 100f, mTranslationZ / 100f)
+                            Matrix.rotateM(userOffset, 0, mRotationX, 1f, 0f, 0f)
+                            Matrix.rotateM(userOffset, 0, mRotationY, 0f, 1f, 0f)
+                            Matrix.rotateM(userOffset, 0, mRotationZ, 0f, 0f, 1f)
+                            Matrix.scaleM(userOffset, 0, mScaleX / 100f, mScaleY / 100f, mScaleZ / 100f)
+
+                            Matrix.multiplyMM(anchorMatrix, 0, baseAnchorPose, 0, userOffset, 0)
+                            val viewModelMatrix = FloatArray(16)
+                            Matrix.multiplyMM(viewModelMatrix, 0, viewMatrix, 0, anchorMatrix, 0)
+                            drawBox(projectionMatrix, viewModelMatrix)
+                        }
                     }
                 }
             }
@@ -364,35 +402,39 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val tap = queuedTaps.poll() ?: return
         if (camera.trackingState != com.google.ar.core.TrackingState.TRACKING) return
 
-        val hits = frame.hitTest(tap)
-        // PRIORITY: STRICTLY HORIZONTAL PLANES ONLY for Data Recording Stability
-        val bestHit = hits.firstOrNull { hit ->
-            val t = hit.trackable
-            (t is com.google.ar.core.Plane && t.trackingState == com.google.ar.core.TrackingState.TRACKING && 
-             t.type == com.google.ar.core.Plane.Type.HORIZONTAL_UPWARD_FACING)
-        }
-        // Removed fallback to DepthPoint to prevent drift.
-
-        if (bestHit != null) {
-            val hitPose = bestHit.hitPose
-            
-            // For ground planes, we force UPRIGHT to prevent annoying tilt on placement.
-            // For depth points, we use the original hitPose for better handheld alignment.
-            val finalPose = if (bestHit.trackable is com.google.ar.core.Plane) {
-                 com.google.ar.core.Pose.makeTranslation(hitPose.tx(), hitPose.ty(), hitPose.tz())
-            } else {
-                hitPose
-            }
-            
-            // GL Thread safe update
-            resetAnchor()
-            synchronized(this) {
-                currentAnchor = bestHit.trackable.createAnchor(finalPose)
-            }
-            
+        // Priority 1: if the marker is confidently tracked, anchor directly to marker pose.
+        if (tryPlaceAnchorFromTrackedMarker()) {
             (context as MainActivity).runOnUiThread {
                 context.onAnchorPlaced()
             }
+            return
+        }
+
+        val hits = frame.hitTest(tap)
+        val bestHit =
+            hits.firstOrNull { hit ->
+                val t = hit.trackable
+                t is com.google.ar.core.DepthPoint &&
+                    t.trackingState == com.google.ar.core.TrackingState.TRACKING
+            }
+                ?: hits.firstOrNull { hit ->
+                    val t = hit.trackable
+                    t is com.google.ar.core.Plane &&
+                        t.trackingState == com.google.ar.core.TrackingState.TRACKING &&
+                        t.isPoseInPolygon(hit.hitPose)
+                }
+                ?: hits.firstOrNull { hit ->
+                    val t = hit.trackable
+                    t is com.google.ar.core.Point &&
+                        t.trackingState == com.google.ar.core.TrackingState.TRACKING &&
+                        t.orientationMode == com.google.ar.core.Point.OrientationMode.ESTIMATED_SURFACE_NORMAL
+                }
+
+        if (bestHit == null) return
+
+        placeAnchorFromHit(bestHit)
+        (context as MainActivity).runOnUiThread {
+            context.onAnchorPlaced()
         }
     }
 
@@ -428,8 +470,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     fun hasTrackingPlane(): Boolean {
         val session = this.session ?: return false
         return session.getAllTrackables(com.google.ar.core.Plane::class.java).any { 
-            it.trackingState == com.google.ar.core.TrackingState.TRACKING &&
-            it.type == com.google.ar.core.Plane.Type.HORIZONTAL_UPWARD_FACING
+            it.trackingState == com.google.ar.core.TrackingState.TRACKING
         }
     }
 }
