@@ -25,6 +25,11 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var anchorMatrix = FloatArray(16)
     private val lastTrackedAnchorPose = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
     private var hasLastTrackedAnchorPose = false
+    private val anchorSmoothedTranslation = FloatArray(3)
+    private val anchorSmoothedQuaternion = FloatArray(4) // [x,y,z,w]
+    private var anchorPoseInitialized = false
+    private val anchorTranslationAlpha = 0.25f
+    private val anchorRotationAlpha = 0.20f
 
     private var positionHandle = -1
     private var colorHandle = -1
@@ -82,11 +87,76 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         currentAnchor?.detach()
         currentAnchor = null
         hasLastTrackedAnchorPose = false
+        anchorPoseInitialized = false
     }
 
     @Synchronized
     fun resetPoseSmoothing() {
         // Marker smoothing removed in ground-anchor-only mode.
+    }
+
+    private fun normalizeQuat(q: FloatArray): FloatArray {
+        val n = kotlin.math.sqrt((q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).toDouble()).toFloat()
+        if (n <= 1e-8f) return floatArrayOf(0f, 0f, 0f, 1f)
+        return floatArrayOf(q[0] / n, q[1] / n, q[2] / n, q[3] / n)
+    }
+
+    private fun slerpQuat(q0In: FloatArray, q1In: FloatArray, t: Float): FloatArray {
+        var q0 = normalizeQuat(q0In)
+        var q1 = normalizeQuat(q1In)
+        var dot = q0[0] * q1[0] + q0[1] * q1[1] + q0[2] * q1[2] + q0[3] * q1[3]
+        if (dot < 0f) {
+            dot = -dot
+            q1 = floatArrayOf(-q1[0], -q1[1], -q1[2], -q1[3])
+        }
+        if (dot > 0.9995f) {
+            val out = floatArrayOf(
+                q0[0] + t * (q1[0] - q0[0]),
+                q0[1] + t * (q1[1] - q0[1]),
+                q0[2] + t * (q1[2] - q0[2]),
+                q0[3] + t * (q1[3] - q0[3])
+            )
+            return normalizeQuat(out)
+        }
+        val theta0 = kotlin.math.acos(dot.toDouble()).toFloat()
+        val sinTheta0 = kotlin.math.sin(theta0.toDouble()).toFloat().coerceAtLeast(1e-8f)
+        val theta = theta0 * t
+        val sinTheta = kotlin.math.sin(theta.toDouble()).toFloat()
+        val s0 = kotlin.math.cos(theta.toDouble()).toFloat() - dot * sinTheta / sinTheta0
+        val s1 = sinTheta / sinTheta0
+        return floatArrayOf(
+            s0 * q0[0] + s1 * q1[0],
+            s0 * q0[1] + s1 * q1[1],
+            s0 * q0[2] + s1 * q1[2],
+            s0 * q0[3] + s1 * q1[3]
+        )
+    }
+
+    private fun updateAnchorSmoothing(targetPose: Pose): Pose {
+        val t = targetPose.translation
+        val q = targetPose.rotationQuaternion
+        if (!anchorPoseInitialized) {
+            anchorSmoothedTranslation[0] = t[0]
+            anchorSmoothedTranslation[1] = t[1]
+            anchorSmoothedTranslation[2] = t[2]
+            anchorSmoothedQuaternion[0] = q[0]
+            anchorSmoothedQuaternion[1] = q[1]
+            anchorSmoothedQuaternion[2] = q[2]
+            anchorSmoothedQuaternion[3] = q[3]
+            anchorPoseInitialized = true
+        } else {
+            anchorSmoothedTranslation[0] += anchorTranslationAlpha * (t[0] - anchorSmoothedTranslation[0])
+            anchorSmoothedTranslation[1] += anchorTranslationAlpha * (t[1] - anchorSmoothedTranslation[1])
+            anchorSmoothedTranslation[2] += anchorTranslationAlpha * (t[2] - anchorSmoothedTranslation[2])
+            val qOut = slerpQuat(anchorSmoothedQuaternion, q, anchorRotationAlpha)
+            anchorSmoothedQuaternion[0] = qOut[0]
+            anchorSmoothedQuaternion[1] = qOut[1]
+            anchorSmoothedQuaternion[2] = qOut[2]
+            anchorSmoothedQuaternion[3] = qOut[3]
+        }
+        val pT = Pose.makeTranslation(anchorSmoothedTranslation[0], anchorSmoothedTranslation[1], anchorSmoothedTranslation[2])
+        val pR = Pose.makeRotation(anchorSmoothedQuaternion[0], anchorSmoothedQuaternion[1], anchorSmoothedQuaternion[2], anchorSmoothedQuaternion[3])
+        return pT.compose(pR)
     }
 
     fun placeInAir(useDepth: Boolean = true) {
@@ -138,6 +208,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         currentAnchor = hit.createAnchor()
         currentAnchor?.pose?.toMatrix(lastTrackedAnchorPose, 0)
         hasLastTrackedAnchorPose = true
+        anchorPoseInitialized = false
     }
 
     @Synchronized
@@ -146,6 +217,7 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
         currentAnchor = plane.createAnchor(pose)
         currentAnchor?.pose?.toMatrix(lastTrackedAnchorPose, 0)
         hasLastTrackedAnchorPose = true
+        anchorPoseInitialized = false
     }
 
     private fun projectPointToPlane(pointPose: Pose, planePose: Pose): FloatArray {
@@ -249,14 +321,17 @@ class ARRenderer(private val context: Context) : GLSurfaceView.Renderer {
                     if (anchor != null) {
                         val baseAnchorPose = FloatArray(16)
                         val hasBasePose = if (anchor.trackingState == com.google.ar.core.TrackingState.TRACKING) {
-                            anchor.pose.toMatrix(baseAnchorPose, 0)
+                            val filteredPose = updateAnchorSmoothing(anchor.pose)
+                            filteredPose.toMatrix(baseAnchorPose, 0)
                             System.arraycopy(baseAnchorPose, 0, lastTrackedAnchorPose, 0, 16)
                             hasLastTrackedAnchorPose = true
                             true
                         } else if (hasLastTrackedAnchorPose) {
+                            anchorPoseInitialized = false
                             System.arraycopy(lastTrackedAnchorPose, 0, baseAnchorPose, 0, 16)
                             true
                         } else {
+                            anchorPoseInitialized = false
                             false
                         }
 
